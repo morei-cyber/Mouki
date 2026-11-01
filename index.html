@@ -289,6 +289,7 @@ body[data-sim-mode="shogi"] .simPanel{top:calc(58px + env(safe-area-inset-top))}
    <div id="shogiRecentResults" class="shogiRecentPanel">まだ対局履歴はありません。自己対戦研究とは別に記録されます。</div>
    <h3 style="margin:12px 0 7px;font-size:12px">🔬 将棋研究ラボ</h3>
    <div class="shogiControls"><button id="shogiOpeningScanBtn">棋譜・定跡を再分析</button><button id="shogiMateScanBtn">現在局面の1手詰を検査</button><button id="shogiSelfPlayBtn" class="primary">自己対戦研究 1局</button><button id="shogiAuditBtn">保存棋譜・命名を検証</button><button id="shogiLLMNameBtn">ローカルAIで戦法を命名</button></div>
+   <div class="shogiControls" style="margin-top:7px"><button id="exportTrainedAIBtn" class="primary">🧠 鍛えたAIをダウンロード</button><button id="importTrainedAIBtn">保存したAIを読み込む</button><input id="importTrainedAIFile" type="file" accept="application/json,.json" hidden></div><div class="shogiLearningNote">AIパックには対戦AIのPPO重み、勉学AIの技能モデルと知識、協力AIの方策、将棋AIの価値ネット・定跡・戦術・相手学習・棋譜を保存します。同じAI観察ゲームへ読み込めば学習状態を引き継げます。言語AI本体（LFM2.5）は別途モデルの初回ロードが必要です。</div>
    <div id="shogiResearchStatus" class="shogiLearningNote">研究を実行すると棋譜の再分析・詰み筋検査・自己対戦の結果をここに表示します。</div>
    <h3 style="margin:12px 0 7px;font-size:12px">🧭 棋譜から発見した定跡候補</h3><div id="shogiOpeningKnowledge" class="shogiLearningNote">まだ定跡候補はありません。</div>
    <h3 style="margin:12px 0 7px;font-size:12px">✨ 戦法候補・命名の根拠</h3><div id="shogiSelfStrategies" class="shogiLearningNote">旧方式で自動生成された名前と、ローカル言語AIが実際に生成した名前を区別して表示します。</div><div id="shogiAuditReport" class="shogiLearningNote">「保存棋譜・命名を検証」を押すと、この端末に保存された棋譜を合法手で再生し、引き分け理由も点検します。</div>
@@ -3435,26 +3436,46 @@ function shogiAuditSavedRecords(){
  const textReport=`【棋譜・命名監査】\n累計通常対局：${totalGames}局／引き分け ${totalDraws}局（${(100*totalDraws/Math.max(1,totalGames)).toFixed(1)}%）\n直近保存履歴：${hist.length}局／引き分け ${histDraws}局（${(100*histDraws/Math.max(1,hist.length)).toFixed(1)}%）\n自己対戦研究：${selfGames}局／引き分け ${selfDraws}局（${(100*selfDraws/Math.max(1,selfGames)).toFixed(1)}%）\n保存棋譜：通常 ${normal.length}局＋自己対戦 ${research.length}局（最大各24局の保存分）\n合法・整合：${valid}局／要確認：${invalid}局／再生手数：${movesChecked}手\n引き分け記録：${drawClaims}局／4回同一局面で確認：${verifiedDraws}局／棋譜で確認できず：${unverifiedDraws}局\n\n【直近100件の通常対局履歴・引き分け理由】\n${topReasons}\n\n【戦法名の出所】\n旧方式（特徴ハッシュ＋定型語）：${legacy}件／ローカル言語AIの生成記録あり：${llm}件／命名時点の証拠なし：${unproven}件\n旧方式の名前はAI言語モデルが文章を考えて命名したものではありません。\n\n【監査で見つかった問題】\n${firstProblems.length?firstProblems.join('\n'):'保存された棋譜に再生上の問題は見つかりませんでした。'}\n注意：ここで検証できるのは端末に残っている直近の保存棋譜です。累計件数・古い削除済み棋譜までは遡れません。`;
  const box=$('shogiAuditReport');if(box)box.textContent=textReport;return {valid,invalid,drawClaims,verifiedDraws,unverifiedDraws,movesChecked,report:textReport};
 }
+let shogiNamingBusy=false;
 async function shogiGeneratePendingStrategyNames(){
- const l=shogiBrain.learner,lab=l.strategyLab||(l.strategyLab={games:0,candidates:{},named:[],lastDiscovery:''}),box=$('shogiAuditReport');
- if(localLanguageAI.status!=='loaded'||!localLanguageAI.pipeline){if(box)box.textContent='命名にはローカル言語AIが必要です。先にAIラボの「ローカル言語AIを読み込む」を実行してください。';return;}
+ const l=shogiBrain.learner,lab=l.strategyLab||(l.strategyLab={games:0,candidates:{},named:[],lastDiscovery:''}),box=$('shogiAuditReport'),button=$('shogiLLMNameBtn');
+ if(shogiNamingBusy){if(box)box.textContent='命名処理はすでに実行中です。';return;}
+ if(localLanguageAI.status!=='loaded'||!localLanguageAI.pipeline){if(box)box.textContent='命名にはローカル言語AIが必要です。AI研究室でモデルをロードしてから実行してください。';return;}
  if(localLanguageAI.busy){if(box)box.textContent='ローカル言語AIは別の文章を生成中です。';return;}
- const pending=Object.values(lab.candidates||{}).filter(c=>(c.samples||0)>=5&&(c.winRate??(c.wins||0)/Math.max(1,c.samples))>=.60&&!((lab.named||[]).some(n=>n.signature===c.signature&&n.nameSource==='local-llm'))&&!c.aiName).slice(0,3);
- if(!pending.length){if(box)box.textContent='現在、合法な序盤棋譜を持ち、5局以上・勝点率60%以上で、まだ命名されていない戦法候補はありません。';return;}
- const existing=(lab.named||[]).map(x=>x.name).filter(Boolean),created=[];
- for(const c of pending){
-  const prompt=`次の将棋の駒組み候補に、短く独自性のある日本語の戦法名を1つだけ付けてください。既存の戦法名を模倣せず、定型語の組合せだけにせず、この特徴を名前に反映してください。実在の定跡として確認済みとは言わないでください。説明や番号を付けず、名前だけ返してください。\n特徴：${c.featureSummary||c.kind}\n棋譜サンプル：${c.samples}局／勝${c.wins||0}・敗${c.losses||0}・分${c.draws||0}\n実勝率：${(100*(c.winRate??(c.wins||0)/Math.max(1,c.samples))).toFixed(1)}%／勝点率：${(100*(c.scoreRate??((c.wins||0)+.5*(c.draws||0))/Math.max(1,c.samples))).toFixed(1)}%\n合法再生できた序盤16手：${c.lineText||'記録なし'}\n既存名（重複禁止）：${existing.concat(created).join('、')||'なし'}`;
-  let raw='';try{raw=await runLocalLanguageAI(prompt,'あなたは将棋の駒組みを観察して命名する日本語の研究者です。入力された特徴に忠実に、名前だけを1つ出してください。確認していない新規性や強さを断定しないでください。');}catch(err){if(box)box.textContent='命名に失敗：'+String(err?.message||err);break;}
-  let name=String(raw).split(/[\n。、「」]/)[0].replace(/^[\s「『"'・●0-9.：:]+/,'').replace(/[」』"']+$/,'').trim().slice(0,18);
-  if(!name||existing.concat(created).includes(name)){if(box)box.textContent=`生成名が空または既存名と重複しました：${String(raw).slice(0,100)}。再命名は行っていません。`;continue;}
-  const now=Date.now();c.aiName=name;c.name=name;c.nameSource='local-llm';c.namingModel=localLanguageAI.model;c.namingAt=now;c.namingRawOutput=String(raw).slice(0,500);
-  const named={id:'ai-llm-strategy-'+now+'-'+String(c.signature).slice(0,12),name,signature:c.signature,kind:c.kind,samples:c.samples,wins:c.wins||0,losses:c.losses||0,draws:c.draws||0,winRate:c.winRate??0,scoreRate:c.scoreRate??0,description:`${c.featureSummary||c.kind}を表す候補名。ローカル言語AIが生成。名称の独自性・定跡としての新規性は未検証。`,lineText:c.lineText||'',lineFormat:'full-16-ply',nameSource:'local-llm',namingModel:localLanguageAI.model,namingAt:now,namingRawOutput:String(raw).slice(0,500),qualificationEvidence:c.qualificationEvidence||'現時点の保存サンプル条件に到達'};
-  const priorNamed=lab.named.find(x=>x.signature===c.signature);
+ const pending=Object.values(lab.candidates||{}).filter(c=>(c.samples||0)>=5&&(c.winRate??(c.wins||0)/Math.max(1,c.samples))>=.60&&!((lab.named||[]).some(n=>n.signature===c.signature&&n.nameSource==='local-llm'))&&!c.aiName).sort((a,b)=>(b.samples||0)-(a.samples||0)).slice(0,1);
+ if(!pending.length){if(box)box.textContent='現在、合法な序盤棋譜を持ち、5局以上・実勝率60%以上で、未命名の候補はありません。';return;}
+ const c=pending[0],existing=(lab.named||[]).map(x=>x.name).filter(Boolean),wasPaused=!!paused;
+ let raw='',pipeline=localLanguageAI.pipeline,success=false;
+ shogiNamingBusy=true;localLanguageAI.busy=true;paused=true;if(button)button.disabled=true;
+ if(box)box.textContent='命名準備中：メモリを落ち着かせるため少し待機しています。今回は候補1件だけを短く生成します。';
+ try{
+  // Let the just-loaded model and browser memory settle before allocating a decode cache.
+  await new Promise(resolve=>setTimeout(resolve,2200));
+  await aiLabYieldUI();
+  const prompt='将棋の駒組み候補に、特徴を反映した日本語の戦法名を1つだけ付けてください。既存名を避け、実在の定跡・新規性・強さは断定しないでください。名前だけ。\n特徴：'+String(c.featureSummary||c.kind||'').slice(0,220)+'\n棋譜：'+c.samples+'局、勝'+(c.wins||0)+'・敗'+(c.losses||0)+'・分'+(c.draws||0)+'。合法再生済み16手：'+String(c.lineText||'記録なし').slice(0,180)+'\n既存名：'+(existing.join('、').slice(0,160)||'なし');
+  const out=await pipeline([{role:'system',content:'将棋研究者として、特徴に忠実な短い名称だけを日本語で返す。余計な説明は禁止。'},{role:'user',content:prompt.slice(0,760)}],{max_new_tokens:16,do_sample:false,num_beams:1});
+  const generated=out?.[0]?.generated_text;
+  raw=String(Array.isArray(generated)?(generated[generated.length-1]?.content||''):generated||'').trim();
+  let name=raw.split(/[\n。、「」]/)[0].replace(/^[\s「『"'・●0-9.：:]+/,'').replace(/[」』"']+$/,'').trim().slice(0,16);
+  if(!name||existing.includes(name))throw new Error('生成名が空、または既存名と重複しました。再生成は行っていません。');
+  const now=Date.now();c.aiName=name;c.name=name;c.nameSource='local-llm';c.namingModel=localLanguageAI.model;c.namingAt=now;c.namingRawOutput=raw.slice(0,220);
+  const named={id:'ai-llm-strategy-'+now+'-'+String(c.signature).slice(0,12),name,signature:c.signature,kind:c.kind,samples:c.samples,wins:c.wins||0,losses:c.losses||0,draws:c.draws||0,winRate:c.winRate??0,scoreRate:c.scoreRate??0,description:String(c.featureSummary||c.kind||'駒組み候補').slice(0,180)+'を表す候補名。ローカル言語AIが生成。名称の独自性・定跡としての新規性は未検証。',lineText:c.lineText||'',lineFormat:'full-16-ply',nameSource:'local-llm',namingModel:localLanguageAI.model,namingAt:now,namingRawOutput:raw.slice(0,220),qualificationEvidence:c.qualificationEvidence||'現時点の保存サンプル条件に到達'};
+  const priorNamed=(lab.named||[]).find(x=>x.signature===c.signature);
   if(priorNamed){priorNamed.previousNames=Array.isArray(priorNamed.previousNames)?priorNamed.previousNames:[];priorNamed.previousNames.push({name:priorNamed.name,source:priorNamed.nameSource||'legacy-template-hash',at:priorNamed.createdAt||null});Object.assign(priorNamed,named,{previousNames:priorNamed.previousNames.slice(-4)});}
   else lab.named.push(named);
-  created.push(name);
+  lab.named=lab.named.slice(-12);lab.lastDiscovery='ローカル言語AIが命名：'+name;success=true;
+  saveShogiBrain();
+  if(box)box.textContent='命名完了：「'+name+'」\n候補1件だけを生成しました。短い出力で処理し、言語モデルはこの後メモリ解放します。再度命名する場合はモデルを読み込み直してください。';
+ }catch(err){if(box)box.textContent='命名を中断しました：'+String(err?.message||err).slice(0,220)+'\n既存の学習データは保持しています。';}
+ finally{
+  // Dispose the large ONNX session after the single short generation to reduce delayed Safari memory pressure.
+  await new Promise(resolve=>setTimeout(resolve,650));
+  try{if(pipeline?.dispose)await pipeline.dispose();}catch(_){}
+  localLanguageAI.pipeline=null;localLanguageAI.status='unloaded';localLanguageAI.device='unknown';localLanguageAI.busy=false;
+  shogiNamingBusy=false;paused=wasPaused;if(button)button.disabled=false;
+  aiLabSetStage(success?'命名後のモデルメモリを解放しました。再利用時はモデルを再ロードしてください。':'安全のため命名セッションを解放しました。',0);
+  refreshAILab();if(success)renderShogi();
  }
- lab.named=lab.named.slice(-12);lab.lastDiscovery=created.length?`ローカル言語AIが命名：${created.join('・')}`:'今回は新しい名前を確定できませんでした。';saveShogiBrain();renderShogi();if(box)box.textContent=created.length?`ローカル言語AI（${localLanguageAI.model}）が生成・保存した名前：${created.join('、')}\n生成元・時刻・生出力を保存しました。名称の既存戦法との重複・独自性は別途確認が必要です。`:'命名結果なし。';
 }
 // CPU strength now comes from more useful move ordering and learned opening plans, not longer waits.
 function shogiCpuProfile(level,style='auto'){
@@ -3549,6 +3570,58 @@ function makeParallelSnapshot(){return {
  shogi:{board:shogiState.board,hands:shogiState.hands,turn:shogiState.turn,ply:shogiState.ply}
  };}
 function saveParallelResearch(){try{localStorage.setItem(PARALLEL_SAVE_KEY,JSON.stringify(parallelResearchState));}catch(_){}}
+const TRAINED_AI_PACKAGE_FORMAT='ai-observation-trained-brain';
+function trainedAIStorageKeys(){return [STORAGE_KEY,STORAGE_KEY+':checkpoint',TRI_SIM_STORAGE_KEY,SHOGI_SAVE_KEY,PARALLEL_SAVE_KEY,BENCHMARK_STORAGE_KEY];}
+function exportTrainedAIPackage(){
+ try{
+  saveLearning(true);saveResearchCheckpoint();saveTriBrain();saveShogiBrain();saveParallelResearch();
+  const storage={};for(const key of trainedAIStorageKeys())storage[key]=localStorage.getItem(key);
+  const packageData={format:TRAINED_AI_PACKAGE_FORMAT,version:1,createdAt:new Date().toISOString(),description:'AI観察ゲームの学習済みパラメータ・知識・研究データ。実行エンジンは同じAI観察ゲーム本体を使用します。',modules:{
+   duel:{completedTrials:Number(completedTrials)||0,bluePPOUpdates:Number(blue.ppoModel?.updates)||0,redPPOUpdates:Number(red.ppoModel?.updates)||0},
+   study:{attempts:Number(academicState.totalAttempts)||0,correct:Number(academicState.totalCorrect)||0,knowledgeCards:Object.keys(academicState.facts||{}).length},
+   coop:{episodes:Number(coopRecord.episodes)||0,updates:Number(coopRecord.policy?.updates)||0},
+   shogi:{games:Number(shogiBrain.learner?.games)||0,draws:Number(shogiBrain.learner?.draws)||0,valueNetUpdates:Number(shogiBrain.learner?.valueNet?.updates)||0,openingPositions:Object.keys(shogiBrain.learner?.openingBook||{}).length,strategyNames:(shogiBrain.learner?.strategyLab?.named||[]).length}
+  },storage};
+  const json=JSON.stringify(packageData),blob=new Blob([json],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download='AI観察ゲーム_鍛えたAI_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);
+  toast('AIパックを書き出しました','約'+(blob.size/1048576).toFixed(2)+'MB／対戦・勉学・協力・将棋AIを収録',2600);
+  const box=$('shogiResearchStatus');if(box)box.textContent='AIパックを作成しました（'+(blob.size/1048576).toFixed(2)+'MB）。別の端末では同じAI観察ゲームを開き、「保存したAIを読み込む」からこのJSONを選んでください。';
+ }catch(err){toast('AIパックの保存に失敗',String(err?.message||err).slice(0,160),2800);}
+}
+function validateTrainedAIPackage(pkg){
+ if(!pkg||pkg.format!==TRAINED_AI_PACKAGE_FORMAT||pkg.version!==1||!pkg.storage||typeof pkg.storage!=='object')throw new Error('AI観察ゲームの学習パック形式ではありません。');
+ const allowed=new Set(trainedAIStorageKeys()),entries=[];
+ for(const [key,raw] of Object.entries(pkg.storage)){
+  if(!allowed.has(key))throw new Error('許可されていない保存キーが含まれています。');
+  if(raw===null){entries.push([key,null]);continue;}
+  if(typeof raw!=='string'||raw.length>24*1024*1024)throw new Error('学習データのサイズまたは形式が不正です。');
+  let parsed;try{parsed=JSON.parse(raw);}catch(_){throw new Error(key+' のJSONが壊れています。');}
+  if(key===STORAGE_KEY&&(!parsed||![14,15,16,17,18,19,20,21,22,23].includes(parsed.version)||!parsed.blue||!parsed.red))throw new Error('対戦AIデータのバージョンが対応していません。');
+  if(key===STORAGE_KEY+':checkpoint'&&(!parsed||![2,3].includes(parsed.version)))throw new Error('学習チェックポイントの形式が違います。');
+  if(key===TRI_SIM_STORAGE_KEY&&(!parsed||parsed.version!==1||!parsed.academic||!parsed.coop))throw new Error('勉学・協力AIデータの形式が違います。');
+  if(key===SHOGI_SAVE_KEY&&(!parsed||!parsed.learner||!parsed.learner.valueNet||!Array.isArray(parsed.learner.valueNet.weights)||![225,897].includes(parsed.learner.valueNet.weights.length)))throw new Error('将棋AIデータまたは学習重みが不正です。');
+  if(key===PARALLEL_SAVE_KEY&&(!parsed||typeof parsed!=='object'))throw new Error('並列研究データの形式が違います。');
+  if(key===BENCHMARK_STORAGE_KEY&&!Array.isArray(parsed))throw new Error('実地テスト履歴の形式が違います。');
+  entries.push([key,raw]);
+ }
+ if(!entries.length)throw new Error('読み込める学習データがありません。');
+ if(!entries.some(([key,raw])=>key===SHOGI_SAVE_KEY&&raw))throw new Error('将棋AIの学習データが見つかりません。');
+ return entries;
+}
+async function importTrainedAIPackage(file){
+ if(!file)return;
+ if(file.size>45*1024*1024){toast('読み込み中止','AIパックが45MBを超えています。',2400);return;}
+ try{
+  const pkg=JSON.parse(await file.text()),entries=validateTrainedAIPackage(pkg);
+  const summary=pkg.modules||{},s=summary.shogi||{},d=summary.duel||{},a=summary.study||{},c=summary.coop||{};
+  const detail='作成日時：'+(pkg.createdAt||'不明')+'\n対戦AI：'+(d.completedTrials||0)+'試行\n勉学AI：'+(a.attempts||0)+'問・知識'+(a.knowledgeCards||0)+'件\n協力AI：'+(c.episodes||0)+'試行\n将棋AI：'+(s.games||0)+'局・価値更新'+(s.valueNetUpdates||0)+'回・定跡'+(s.openingPositions||0)+'局面\n\nこの端末に保存されている同じ種類の学習データを置き換えます。続行しますか？';
+  if(!confirm(detail))return;
+  const backup=new Map(entries.map(([key])=>[key,localStorage.getItem(key)]));
+  try{for(const [key,raw] of entries){if(raw===null)localStorage.removeItem(key);else localStorage.setItem(key,raw);}}
+  catch(writeError){for(const [key,raw] of backup){try{if(raw===null)localStorage.removeItem(key);else localStorage.setItem(key,raw);}catch(_){}}throw new Error('保存領域不足などで書き込めませんでした。元のデータを戻せる範囲で復元しました。 '+String(writeError?.message||writeError));}
+  alert('学習済みAIを読み込みました。画面を再読み込みして、すべてのAIへ反映します。');location.reload();
+ }catch(err){toast('AIパックを読み込めません',String(err?.message||err).slice(0,220),3200);}
+}
 function parallelOnMessage(e){const d=e.data||{};if(d.type==='research'){parallelResearchState.cycles++;parallelResearchState[d.domain]={...parallelResearchState[d.domain],...d.result,cycles:(parallelResearchState[d.domain]?.cycles||0)+1};parallelResearchState.lastAt=d.at;if(d.domain==='coop'&&d.result.preferredSwitch)coopRecord.recommendedSwitch=d.result.preferredSwitch;if(parallelBroadcast)try{parallelBroadcast.postMessage({type:'research',domain:d.domain,result:d.result,at:d.at});}catch(_){}if(parallelResearchState.cycles%12===0)saveParallelResearch();}
  else if(d.type==='searchResult'){const r=parallelPending.get(d.id);if(r){r.results.push(d);r.done++;if(r.done>=r.count){parallelPending.delete(d.id);if(r.timer)clearTimeout(r.timer);const best=r.results.filter(x=>x.move).sort((a,b)=>(b.score-a.score)||(b.depth-a.depth))[0]||null;r.resolve(best?{...best,label:`Worker並列・深度${best.depth||0}・${best.nodes||0} nodes`}:null);}}}}
 function initParallelThinking(){
@@ -3612,6 +3685,9 @@ $('logsToggleBtn').addEventListener('click',()=>{const d=$('detailsLogDrawer'),o
  $('shogiSelfPlayBtn').addEventListener('click',runShogiSelfPlayResearch);
  $('shogiAuditBtn').addEventListener('click',()=>{const r=shogiAuditSavedRecords();if(r)toast('棋譜監査完了',`合法 ${r.valid}局／要確認 ${r.invalid}局／引き分け確認 ${r.verifiedDraws}/${r.drawClaims}局`,2200);});
  $('shogiLLMNameBtn').addEventListener('click',shogiGeneratePendingStrategyNames);
+ $('exportTrainedAIBtn').addEventListener('click',exportTrainedAIPackage);
+ $('importTrainedAIBtn').addEventListener('click',()=>$('importTrainedAIFile').click());
+ $('importTrainedAIFile').addEventListener('change',e=>{const file=e.target.files?.[0];if(file)importTrainedAIPackage(file);e.target.value='';});
 $('pauseBtn').addEventListener('click',()=>{paused=!paused;$('pauseBtn').textContent=paused?'▶ 再開':'Ⅱ 一時停止';if(paused&&trialAdvanceTimer){clearTimeout(trialAdvanceTimer);trialAdvanceTimer=null;}if(!paused&&gameState==='between'){if(trialAdvanceTimer){clearTimeout(trialAdvanceTimer);trialAdvanceTimer=null;}startTrial();}updateHUD();});
 function syncUnifiedSpeedLabels(){const label=`速度 ×${speed}`;if($('speedBtn'))$('speedBtn').textContent=label;if($('coopSpeedBtn'))$('coopSpeedBtn').textContent=`協力${label}`;if($('shogiSpeedBtn'))$('shogiSpeedBtn').textContent=label;if($('allSpeedBtn'))$('allSpeedBtn').textContent=label;}function cycleUnifiedSpeed(){const i=SPEED_LEVELS.indexOf(speed);speed=SPEED_LEVELS[(i+1)%SPEED_LEVELS.length];syncUnifiedSpeedLabels();updateHUD();}syncUnifiedSpeedLabels();$('speedBtn').addEventListener('click',cycleUnifiedSpeed);
 const LOG_SHORTEN_LEVELS=[1,2,5,10,25,50,100];
