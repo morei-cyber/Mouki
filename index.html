@@ -151,7 +151,7 @@ body[data-sim-mode="shogi"] .simPanel{top:calc(58px + env(safe-area-inset-top))}
  <button data-sim-mode="coop">🤝 協力ゲーム</button>
  <button data-sim-mode="shogi">♟ 将棋対戦</button>
  <button id="allSpeedBtn" class="compact" title="全シミュレーション共通速度">速度 ×1</button>
- <span id="parallelStatus">4AI学習基盤</span>
+ <span id="parallelStatus">低負荷AI基盤</span>
  <button id="aiLabOpenBtn" class="compact">🧠 AI研究室</button>
 </div>
 <div id="aiLabModal" class="aiLabModal" hidden>
@@ -169,7 +169,7 @@ body[data-sim-mode="shogi"] .simPanel{top:calc(58px + env(safe-area-inset-top))}
    <p id="aiLabModelStatus">未ロード。モデルを読み込むと、外部APIなしで端末内の文章生成を利用できます。初回は数百MB規模のモデルをダウンロードします。</p>
    <div class="aiLabProgress"><i id="aiLabProgressFill"></i></div>
    <div class="aiLabActions"><button id="aiLabLoadBtn" class="primary">ローカル言語AIを読み込む</button><button id="aiLabReleaseBtn">モデルを解放</button><button id="aiLabRefreshBtn">学習状態を更新</button></div>
-   <p>モデル：Qwen2.5-0.5B-Instruct（4bit ONNX）。Transformers.js v4.3.2。Safari 26以降などWebGPUが利用できればGPU用q4f16、利用できなければWASM/CPU用q4を使います。初回は約483〜786MBのダウンロードが必要です。ブラウザの保存領域が消去された場合は再ダウンロードが必要です。</p>
+   <p>モデル：Qwen2.5-0.5B-Instruct（4bit ONNX）。Transformers.js v4.3.2。WebGPU対応時はq4f16、非対応時はWASM/CPU用q4を使います。初回は約483〜786MBの取得が必要です。ファイル単位の進捗を表示し、ブラウザキャッシュを有効にして再訪時の再取得を抑えます。保存領域が消去された場合は再取得が必要です。生成は1回160トークンまでに制限し、端末負荷を抑えます。</p>
   </div>
   <div class="aiLabTile" style="margin-top:9px">
    <h3>ローカルAIに考えさせる</h3>
@@ -316,13 +316,14 @@ const $=id=>document.getElementById(id),clamp=(v,a,b)=>Math.max(a,Math.min(b,v))
 const rand=(a,b)=>a+Math.random()*(b-a),dist=(x,z,xx,zz)=>Math.hypot(x-xx,z-zz);
 if(!window.THREE){$('loader').style.display='grid';return;}
 const canvas=$('view');let renderer,scene,camera,clock;
+const lowPowerDevice=!!(navigator.maxTouchPoints>0||(window.matchMedia&&matchMedia('(pointer: coarse)').matches));
 try{
- renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:false,powerPreference:'low-power'});
- renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));renderer.setSize(innerWidth,innerHeight,false);renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.setClearColor(0x778792,1);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.08;
+ renderer=new THREE.WebGLRenderer({canvas,antialias:!lowPowerDevice,alpha:false,powerPreference:'low-power'});
+ renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,lowPowerDevice?1.15:1.5));renderer.setSize(innerWidth,innerHeight,false);renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.setClearColor(0x778792,1);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.08;
  scene=new THREE.Scene();scene.background=new THREE.Color(0x778792);clock=new THREE.Clock();
  camera=new THREE.OrthographicCamera(-8.5,8.5,6,-6,.1,100);camera.position.set(0,22,9);camera.up.set(0,1,0);camera.lookAt(0,0.15,0);
 }catch(e){$('loader').innerHTML='<div class="box"><h2>3Dを開始できません</h2><p>このブラウザのWebGLが停止している可能性があります。Safariのタブを減らして再読み込みしてください。</p></div>';return;}
-scene.add(new THREE.HemisphereLight(0xf0f6ff,0x667783,1.25));const sun=new THREE.DirectionalLight(0xffffff,1.55);sun.position.set(-5,14,7);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-10;sun.shadow.camera.right=10;sun.shadow.camera.top=9;sun.shadow.camera.bottom=-9;scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xf0f6ff,0x667783,1.25));const sun=new THREE.DirectionalLight(0xffffff,1.55);sun.position.set(-5,14,7);sun.castShadow=true;sun.shadow.mapSize.set(lowPowerDevice?512:1024,lowPowerDevice?512:1024);sun.shadow.camera.left=-10;sun.shadow.camera.right=10;sun.shadow.camera.top=9;sun.shadow.camera.bottom=-9;scene.add(sun);
 const mats={outside:mat(0x8495a1),room:mat(0xc7d4dc),wall:mat(0x526572),wallTop:mat(0x2f414d),line:mat(0xaab8c2),door:mat(0x23d6a0),goal:mat(0x9debc8),crate:mat(0xb87336),crateTop:mat(0xf0b76e),crate2:mat(0x377eae),crate2Top:mat(0x8ec7ed),ball:mat(0xffbd35),roller:mat(0x687985),barrier:mat(0x384d5c),switchOff:mat(0xf4c442),switchOn:mat(0x62d8a2),stepSide:mat(0x8f9eaa),stepTop:mat(0xc5d0d8),eye:mat(0x10202a),white:mat(0xffffff)};
 function mat(color,roughness=.92){return new THREE.MeshStandardMaterial({color,roughness,metalness:0});}
 const floorGroup=new THREE.Group(),wallGroup=new THREE.Group(),propGroup=new THREE.Group(),agentGroup=new THREE.Group(),markerGroup=new THREE.Group();scene.add(floorGroup,wallGroup,propGroup,markerGroup,agentGroup);
@@ -2063,9 +2064,61 @@ function academicSkillTrain(q,correct){const m=academicSkillEnsureModel(),x=acad
 function academicChooseWeakSubject(){let best=selectedAcademicSubject,bestScore=Infinity;for(const x of ACADEMIC_SUBJECTS){const q={subject:x.key,grade:academicState.grades[x.key]||7,challengeLevel:academicState.examChallengeLevel||10,topic:x.key},prediction=academicSkillPredict(q),n=academicState.subjectStats[x.key]?.attempts||0,score=prediction+.12*Math.sqrt(n/(n+8));if(score<bestScore){bestScore=score;best=x.key;}}return best;}
 function localAIStatusText(){return localLanguageAI.status==='loaded'?`ロード済み／${localLanguageAI.device}／${localLanguageAI.model}`:localLanguageAI.status==='loading'?'ロード中…':localLanguageAI.status==='error'?`エラー：${localLanguageAI.error}`:'未ロード';}
 function refreshAILab(){if(!$('aiLabDuelMetrics'))return;const bm=ppoEnsureModel(blue),rm=ppoEnsureModel(red),sm=academicState.skillModel||{},cb=coopPolicyGet(),sn=shogiEnsureValueNet();$('aiLabDuelMetrics').textContent=`青：PPO 28→64→17（${PPO_LAYOUT.total.toLocaleString()}パラメータ）・更新 ${bm.updates}回・判断 ${bm.decisions}回\n赤：PPO 28→64→17（${PPO_LAYOUT.total.toLocaleString()}パラメータ）・更新 ${rm.updates}回・判断 ${rm.decisions}回\n経験列：最大 ${PPO_CONFIG.maxEpisodeSamples}件／更新エポック ${PPO_CONFIG.epochs}回`;$('aiLabStudyMetrics').textContent=`技能予測MLP 9→32→1（353パラメータ）：${sm.samples||0}回答・${sm.updates||0}更新（言語モデルとは別）\n概念習熟：${Object.keys(academicState.mastery||{}).length}種類／知識カード：${Object.keys(academicState.facts||{}).length}件\n正答率：${academicState.totalAttempts?(100*academicState.totalCorrect/academicState.totalAttempts).toFixed(1)+'%':'未計測'}\n言語AI：${localAIStatusText()}`;$('aiLabCoopMetrics').textContent=`役割選択MLP 9→32→2（386パラメータ）：${cb.samples}試行・${cb.updates}更新（タスク順序は固定）\n探索率：${cb.epsilon.toFixed(3)}／直近報酬：${cb.lastReward.toFixed(3)}\n成功：${coopRecord.wins||0}/${coopRecord.episodes||0}`;$('aiLabShogiMetrics').textContent=`局面価値MLP：12→64→1（897パラメータ）／${sn.samples}局面・${sn.updates}更新・${sn.games}対局\nCPU探索：軽量反復深化・局面キャッシュ・作戦バイアス／次戦準備50ms\n学習パラメータ ${sn.weights.length}個／探索AI：深度${shogiLearnerDepth()}\n棋譜：${shogiBrain.learner.gameArchives?.length||0}局／定跡 ${Object.keys(shogiBrain.learner.openingBook||{}).length}局面`;$('aiLabModelStatus').textContent=localAIStatusText()+(localLanguageAI.status==='unloaded'?'。初回ロードではモデルをダウンロードします。':'');}
-async function loadLocalLanguageAI(){if(localLanguageAI.status==='loaded')return;if(localLanguageAI.busy)return;localLanguageAI.status='loading';localLanguageAI.busy=true;localLanguageAI.error='';$('aiLabLoadBtn').disabled=true;$('aiLabProgressFill').style.width='2%';$('aiLabModelStatus').textContent='Transformers.js v4.3.2本体をロード中…';try{const lib=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2');if(lib.env){lib.env.allowRemoteModels=true;}let device='wasm';try{if(navigator.gpu){const adapter=await navigator.gpu.requestAdapter();if(adapter)device='webgpu';}}catch(_){device='wasm';}localLanguageAI.device=device;$('aiLabModelStatus').textContent=`${device==='webgpu'?'WebGPU':'WASM/CPU'}で4bitモデルを準備中。GPU用q4f16は約483MB、WASM/CPU用q4は約786MBです。初回ダウンロードが必要です。`;$('aiLabProgressFill').style.width='6%';const opts={dtype:device==='webgpu'?'q4f16':'q4',device,progress_callback:(info)=>{if(info&&Number.isFinite(info.progress))$('aiLabProgressFill').style.width=`${clamp(info.progress<=1?info.progress*100:info.progress,0,100)}%`;if(info?.file)$('aiLabModelStatus').textContent=`モデル取得中：${info.file}`;}};try{localLanguageAI.pipeline=await lib.pipeline('text-generation',localLanguageAI.model,opts);}catch(firstError){if(device==='webgpu'){localLanguageAI.device='wasm';$('aiLabModelStatus').textContent='WebGPU初期化に失敗。WASM/CPUへ切替中…';localLanguageAI.pipeline=await lib.pipeline('text-generation',localLanguageAI.model,{dtype:'q4',device:'wasm',progress_callback:opts.progress_callback});}else throw firstError;}localLanguageAI.status='loaded';localLanguageAI.lastLoadAt=Date.now();$('aiLabProgressFill').style.width='100%';$('aiLabModelStatus').textContent=`ロード完了／${localLanguageAI.device}。端末内で文章生成できます。`;toast('ローカル言語AI準備完了',`${localLanguageAI.device}で動作します。`,1600);}catch(err){localLanguageAI.status='error';localLanguageAI.error=String(err?.message||err).slice(0,240);$('aiLabModelStatus').textContent='ロード失敗：'+localLanguageAI.error;detailLog('ローカルLLM読込失敗：'+localLanguageAI.error);}finally{localLanguageAI.busy=false;$('aiLabLoadBtn').disabled=false;refreshAILab();}}
-async function runLocalLanguageAI(prompt,system='あなたは日本語で考える学習・ゲーム研究アシスタントです。分からない点は断定せず、手順と根拠を示してください。'){if(!localLanguageAI.pipeline)throw new Error('先にローカル言語AIを読み込んでください。');if(localLanguageAI.busy)throw new Error('現在、別の文章を生成しています。');localLanguageAI.busy=true;try{const out=await localLanguageAI.pipeline([{role:'system',content:system},{role:'user',content:String(prompt).slice(0,7000)}],{max_new_tokens:240,do_sample:false});const generated=out?.[0]?.generated_text;let answer=Array.isArray(generated)?generated[generated.length-1]?.content:String(generated||'');return String(answer||'回答を生成できませんでした。').trim();}finally{localLanguageAI.busy=false;refreshAILab();}}
-function releaseLocalLanguageAI(){localLanguageAI.pipeline=null;localLanguageAI.status='unloaded';localLanguageAI.error='';localLanguageAI.device='unknown';$('aiLabProgressFill').style.width='0%';$('aiLabModelStatus').textContent='モデル参照を解放しました。ブラウザのモデルキャッシュは再利用可能な場合があります。';refreshAILab();}
+async function loadLocalLanguageAI(){
+ if(localLanguageAI.status==='loaded'||localLanguageAI.busy)return;
+ localLanguageAI.status='loading';localLanguageAI.busy=true;localLanguageAI.error='';
+ $('aiLabLoadBtn').disabled=true;$('aiLabProgressFill').style.width='1%';
+ $('aiLabModelStatus').textContent='Transformers.js v4.3.2を準備中…';
+ const reportProgress=info=>{
+  if(!info)return;
+  if(info.status==='progress_total'&&Number.isFinite(info.progress)){
+   const pct=clamp(info.progress,0,100);$('aiLabProgressFill').style.width=`${pct}%`;
+   $('aiLabModelStatus').textContent=`モデル全体の準備：${pct.toFixed(1)}%（ファイルごとの進捗を集計）`;
+   return;
+  }
+  if(info.status==='progress'&&Number.isFinite(info.progress)){
+   const pct=clamp(info.progress,0,100);$('aiLabProgressFill').style.width=`${pct}%`;
+   const loaded=Number.isFinite(info.loaded)?`${(info.loaded/1048576).toFixed(1)}MB`:'';
+   const total=Number.isFinite(info.total)&&info.total>0?` / ${(info.total/1048576).toFixed(1)}MB`:'';
+   $('aiLabModelStatus').textContent=`取得中：${info.file||'モデルファイル'} ${pct.toFixed(1)}% ${loaded}${total}`;
+   return;
+  }
+  if(info.status==='done'&&info.file)$('aiLabModelStatus').textContent=`取得済み：${info.file}`;
+  if(info.status==='ready'){$('aiLabProgressFill').style.width='98%';$('aiLabModelStatus').textContent='モデルファイル取得完了。推論エンジンを初期化中…';}
+ };
+ try{
+  const lib=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2');
+  if(lib.env){
+   lib.env.allowRemoteModels=true;
+   // Browser Cache API keeps successful downloads for later visits.
+   lib.env.useBrowserCache=true;
+   lib.env.useWasmCache=true;
+  }
+  let device='wasm';
+  try{if(navigator.gpu){const adapter=await navigator.gpu.requestAdapter();if(adapter)device='webgpu';}}catch(_){device='wasm';}
+  localLanguageAI.device=device;
+  $('aiLabModelStatus').textContent=`${device==='webgpu'?'WebGPU':'WASM/CPU'}用の4bitモデルを取得します。初回は時間がかかりますが、取得済みファイルはブラウザキャッシュを再利用します。`;
+  $('aiLabProgressFill').style.width='3%';
+  const makeOptions=useDevice=>({dtype:useDevice==='webgpu'?'q4f16':'q4',device:useDevice,progress_callback:reportProgress});
+  try{localLanguageAI.pipeline=await lib.pipeline('text-generation',localLanguageAI.model,makeOptions(device));}
+  catch(firstError){
+   if(device!=='webgpu')throw firstError;
+   localLanguageAI.device='wasm';
+   $('aiLabModelStatus').textContent='WebGPU初期化に失敗。WASM/CPU方式へ切替。保存済みファイルは可能な範囲で再利用します。';
+   localLanguageAI.pipeline=await lib.pipeline('text-generation',localLanguageAI.model,makeOptions('wasm'));
+  }
+  localLanguageAI.status='loaded';localLanguageAI.lastLoadAt=Date.now();
+  $('aiLabProgressFill').style.width='100%';
+  $('aiLabModelStatus').textContent=`ロード完了／${localLanguageAI.device}。取得ファイルはブラウザキャッシュに保存されます。`;
+  toast('ローカル言語AI準備完了',`${localLanguageAI.device}で動作します。`,1600);
+ }catch(err){
+  localLanguageAI.status='error';localLanguageAI.error=String(err?.message||err).slice(0,240);
+  $('aiLabModelStatus').textContent='ロード失敗：'+localLanguageAI.error;
+  detailLog('ローカルLLM読込失敗：'+localLanguageAI.error);
+ }finally{localLanguageAI.busy=false;$('aiLabLoadBtn').disabled=false;refreshAILab();}
+}
+async function runLocalLanguageAI(prompt,system='あなたは日本語で考える学習・ゲーム研究アシスタントです。分からない点は断定せず、手順と根拠を示してください。'){if(!localLanguageAI.pipeline)throw new Error('先にローカル言語AIを読み込んでください。');if(localLanguageAI.busy)throw new Error('現在、別の文章を生成しています。');localLanguageAI.busy=true;try{const out=await localLanguageAI.pipeline([{role:'system',content:system},{role:'user',content:String(prompt).slice(0,7000)}],{max_new_tokens:160,do_sample:false,num_beams:1});const generated=out?.[0]?.generated_text;let answer=Array.isArray(generated)?generated[generated.length-1]?.content:String(generated||'');return String(answer||'回答を生成できませんでした。').trim();}finally{localLanguageAI.busy=false;refreshAILab();}}
+function releaseLocalLanguageAI(){try{localLanguageAI.pipeline?.dispose?.();}catch(_){}localLanguageAI.pipeline=null;localLanguageAI.status='unloaded';localLanguageAI.error='';localLanguageAI.device='unknown';$('aiLabProgressFill').style.width='0%';$('aiLabModelStatus').textContent='モデル参照を解放しました。ブラウザのモデルキャッシュは再利用可能な場合があります。';refreshAILab();}
 async function askLocalAIFromLab(){const prompt=$('aiLabPrompt').value.trim();if(!prompt){$('aiLabOutput').textContent='質問を入力してください。';return;}$('aiLabAskBtn').disabled=true;$('aiLabOutput').textContent='ローカルモデルが推論中…';try{$('aiLabOutput').textContent=await runLocalLanguageAI(prompt);}catch(err){$('aiLabOutput').textContent='生成できませんでした：'+String(err.message||err);}finally{$('aiLabAskBtn').disabled=false;}}
 async function askLocalAIAboutStudy(){const q=academicRuntime.last;if(!q){$('aiLabOutput').textContent='先に勉学モードで問題を1問表示してください。';return;}const opts=q.responseType==='choice'?'\n選択肢：\n'+(q.choices||[]).map((x,i)=>`${i+1}. ${x}`).join('\n'):'';const prompt=`次の問題を自力で解いてください。正解・解説は与えていません。条件整理、解法、根拠、結論、検算を示してください。\n教科：${q.subject}\n問題：${q.prompt}${opts}`;$('aiLabPrompt').value=prompt;$('aiLabAskBtn').disabled=true;$('aiLabOutput').textContent='現在の問題をローカルモデルで推論中…';try{const text=await runLocalLanguageAI(prompt,'あなたは厳密な日本語の教科AIです。問題文と選択肢だけを使って解き、根拠のない断定を避け、記述式では途中過程を示してください。');$('aiLabOutput').textContent=text;const result=$('studyLocalAIResult');if(result){result.hidden=false;result.textContent='端末内LLMの独立回答（正解データはプロンプトに含めていません）：\n'+text;} }catch(err){$('aiLabOutput').textContent='生成失敗：'+String(err.message||err);}finally{$('aiLabAskBtn').disabled=false;}}
 
@@ -2881,31 +2934,82 @@ function shogiRebuildOpeningResearch(){
  for(const [position,entry] of Object.entries(book))for(const st of Object.values(entry.moves||{})){if((st.n||0)<2)continue;const winRate=((st.w||0)+.5*(st.d||0))/st.n;if(winRate>=.5)discoveries.push({position,moveKey:st.moveKey,moveText:st.moveText,prefix:st.prefix,lineText:st.lineText||st.moveText,games:st.n,winRate,evalMean:(st.evalSum||0)/Math.max(1,st.n)});}
  discoveries.sort((a,b)=>(b.winRate*b.games)-(a.winRate*a.games));l.discoveredOpenings=discoveries.slice(0,20);
 }
-function shogiReanalyzeGames(){
- const l=shogiBrain.learner;l.opponentModel=shogiDefaultOpponentModel();
- for(const game of l.gameArchives||[]){const winner=game.winner==='learner'?1:game.winner==='cpu'?-1:0;const moves=(game.moves||[]).map((r,i)=>({...r,ply:Number(r.ply)||i+1}));shogiUpdateOpponentModel(moves,winner);}
- shogiRebuildOpeningResearch();l.lastResult=`保存棋譜 ${(l.gameArchives||[]).length}局を再分析。相手の着地点 ${Object.keys(l.opponentModel.targetCounts||{}).length}種類・応答定跡 ${Object.keys(l.opponentModel.replyBook||{}).length}局面を抽出。`;
- saveShogiBrain();$('shogiResearchStatus').textContent=`棋譜再分析完了\n分析対局：${l.opponentModel.games}局\n相手の着地点サンプル：${l.opponentModel.samples}件\n相手の戦術傾向：${Object.entries(l.opponentModel.tagCounts).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v])=>`${SHOGI_TACTIC_LABELS[k]||k} ${v}回`).join('／')||'まだデータなし'}\n応答定跡：${Object.keys(l.opponentModel.replyBook).length}局面`;
- renderShogi();
+function shogiYieldMainThread(ms=14){return new Promise(resolve=>setTimeout(resolve,Math.max(0,ms)));}
+async function shogiReanalyzeGames(){
+ if(shogiResearchBusy)return;
+ shogiResearchBusy=true;
+ const btn=$('shogiOpeningScanBtn'),mateBtn=$('shogiMateScanBtn'),selfBtn=$('shogiSelfPlayBtn');
+ [btn,mateBtn,selfBtn].forEach(x=>{if(x)x.disabled=true;});
+ const l=shogiBrain.learner,games=l.gameArchives||[];
+ try{
+  l.opponentModel=shogiDefaultOpponentModel();
+  for(let i=0;i<games.length;i++){
+   const game=games[i],winner=game.winner==='learner'?1:game.winner==='cpu'?-1:0;
+   const moves=(game.moves||[]).map((r,j)=>({...r,ply:Number(r.ply)||j+1}));
+   shogiUpdateOpponentModel(moves,winner);
+   $('shogiResearchStatus').textContent=`棋譜を分割再分析中
+対局 ${i+1}/${games.length}
+この対局の手数：${moves.length}手
+画面操作を止めないよう、対局ごとに処理を区切っています。`;
+   await shogiYieldMainThread(lowPowerDevice?24:8);
+  }
+  shogiRebuildOpeningResearch();
+  l.lastResult=`保存棋譜 ${games.length}局を分割再分析。相手の着地点 ${Object.keys(l.opponentModel.targetCounts||{}).length}種類・応答定跡 ${Object.keys(l.opponentModel.replyBook||{}).length}局面を抽出。`;
+  saveShogiBrain();
+  $('shogiResearchStatus').textContent=`棋譜再分析完了
+分析対局：${l.opponentModel.games}局
+相手の着地点サンプル：${l.opponentModel.samples}件
+相手の戦術傾向：${Object.entries(l.opponentModel.tagCounts).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v])=>`${SHOGI_TACTIC_LABELS[k]||k} ${v}回`).join('／')||'まだデータなし'}
+応答定跡：${Object.keys(l.opponentModel.replyBook).length}局面`;
+ }catch(err){$('shogiResearchStatus').textContent='棋譜再分析エラー：'+String(err?.message||err);}
+ finally{shogiResearchBusy=false;[btn,mateBtn,selfBtn].forEach(x=>{if(x)x.disabled=false;});renderShogi();}
 }
-function shogiScanImmediateMate(){
- const side=shogiState.turn,moves=shogiEngine.legalMoves(shogiState),found=[];
- for(const move of moves){const next=shogiEngine.applyMove(shogiState,move);if(shogiEngine.inCheck(next,-side)&&shogiEngine.legalMoves(next,-side).length===0)found.push(shogiEngine.moveText(shogiState,move));}
- const mr=shogiBrain.learner.mateResearch||(shogiBrain.learner.mateResearch={positions:0,matesFound:0,lastResult:''});mr.positions++;mr.matesFound+=found.length;mr.lastResult=found.length?`1手詰 ${found.length}通り：${found.join('・')}`:'この局面に1手詰は見つかりませんでした。';
- $('shogiResearchStatus').textContent=`1手詰検査完了\n候補手：${moves.length}手\n発見した即詰み：${found.length}通り\n${mr.lastResult}\n累計検査 ${mr.positions}局面／詰み発見 ${mr.matesFound}通り`;
- saveShogiBrain();renderShogi();
+async function shogiScanImmediateMate(){
+ if(shogiResearchBusy)return;
+ shogiResearchBusy=true;
+ const btn=$('shogiMateScanBtn'),openBtn=$('shogiOpeningScanBtn'),selfBtn=$('shogiSelfPlayBtn');
+ [btn,openBtn,selfBtn].forEach(x=>{if(x)x.disabled=true;});
+ try{
+  const side=shogiState.turn,moves=shogiEngine.legalMoves(shogiState),found=[];
+  for(let i=0;i<moves.length;i+=2){
+   for(const move of moves.slice(i,i+2)){
+    const next=shogiEngine.applyMove(shogiState,move);
+    if(shogiEngine.inCheck(next,-side)&&shogiEngine.legalMoves(next,-side).length===0)found.push(shogiEngine.moveText(shogiState,move));
+   }
+   $('shogiResearchStatus').textContent=`1手詰検査を分割実行中
+候補手：${Math.min(i+2,moves.length)}/${moves.length}
+発見：${found.length}通り`;
+   await shogiYieldMainThread(lowPowerDevice?22:6);
+  }
+  const mr=shogiBrain.learner.mateResearch||(shogiBrain.learner.mateResearch={positions:0,matesFound:0,lastResult:''});
+  mr.positions++;mr.matesFound+=found.length;mr.lastResult=found.length?`1手詰 ${found.length}通り：${found.join('・')}`:'この局面に1手詰は見つかりませんでした。';
+  $('shogiResearchStatus').textContent=`1手詰検査完了
+候補手：${moves.length}手
+発見した即詰み：${found.length}通り
+${mr.lastResult}
+累計検査 ${mr.positions}局面／詰み発見 ${mr.matesFound}通り`;
+  saveShogiBrain();
+ }catch(err){$('shogiResearchStatus').textContent='1手詰検査エラー：'+String(err?.message||err);}
+ finally{shogiResearchBusy=false;[btn,openBtn,selfBtn].forEach(x=>{if(x)x.disabled=false;});renderShogi();}
 }
 async function runShogiSelfPlayResearch(){
  if(shogiResearchBusy)return;
  if(shogiRuntime.active&&!shogiRuntime.ended){$('shogiResearchStatus').textContent='先に現在の対局を終了または停止してください。';return;}
- shogiResearchBusy=true;$('shogiSelfPlayBtn').disabled=true;const originalLabel=$('shogiSelfPlayBtn').textContent;$('shogiSelfPlayBtn').textContent='自己対戦中…';
- let state=shogiEngine.initialState();const initialKey=shogiEngine.positionKey(state);state.history.push(initialKey);const records=[],positionTrail=[{key:initialKey,ply:0}],researchPlanNo=(shogiBrain.learner.games||0)+(shogiBrain.learner.selfPlayGames||0),researchPlans={learner:shogiSelectStrategy(1,researchPlanNo),cpu:shogiSelectStrategy(-1,researchPlanNo)};let winner=null,reason='研究対局継続中';
+ shogiResearchBusy=true;$('shogiSelfPlayBtn').disabled=true;
+ $('shogiOpeningScanBtn').disabled=true;$('shogiMateScanBtn').disabled=true;
+ const originalLabel=$('shogiSelfPlayBtn').textContent;$('shogiSelfPlayBtn').textContent='自己対戦中…';
+ let state=shogiEngine.initialState();const initialKey=shogiEngine.positionKey(state);state.history.push(initialKey);
+ const records=[],positionTrail=[{key:initialKey,ply:0}],researchPlanNo=(shogiBrain.learner.games||0)+(shogiBrain.learner.selfPlayGames||0),researchPlans={learner:shogiSelectStrategy(1,researchPlanNo),cpu:shogiSelectStrategy(-1,researchPlanNo)};
+ let winner=null,reason='研究対局継続中';
  try{
   for(let ply=0;winner===null;ply++){
    const side=state.turn,legal=shogiEngine.legalMoves(state);
    if(!legal.length){winner=-side;reason=shogiEngine.inCheck(state,side)?'詰み':'合法手なし（手詰まり）';break;}
-   const l=shogiBrain.learner,profile=shogiCpuProfile(l.cpuLevel,l.cpuStyle),weights=side===1?{...l.weights,tacticBias:{...(l.tacticBias||{})},tacticalPatternBias:{...(l.tacticPhaseBias||{})}}:{material:1.0+profile.level/5000,advance:.05+profile.level/6000,kingSafety:.06+profile.level/4000,hand:.65+profile.level/1800,center:.025+profile.level/9000};
-   if(side===-1){if(profile.adaptive)Object.assign(weights,shogiAdaptiveCpuWeights(state));Object.assign(weights,shogiCpuOpeningPreference(state));}if(side===1)Object.assign(weights,shogiOpeningPreference(state));weights=shogiMergeStrategyWeights(weights,state,side,researchPlans[side===1?'learner':'cpu']);
+   const l=shogiBrain.learner,profile=shogiCpuProfile(l.cpuLevel,l.cpuStyle);
+   let weights=side===1?{...l.weights,tacticBias:{...(l.tacticBias||{})},tacticalPatternBias:{...(l.tacticPhaseBias||{})}}:{material:1.0+profile.level/5000,advance:.05+profile.level/6000,kingSafety:.06+profile.level/4000,hand:.65+profile.level/1800,center:.025+profile.level/9000};
+   if(side===-1){if(profile.adaptive)Object.assign(weights,shogiAdaptiveCpuWeights(state));Object.assign(weights,shogiCpuOpeningPreference(state));}
+   if(side===1)Object.assign(weights,shogiOpeningPreference(state));
+   weights=shogiMergeStrategyWeights(weights,state,side,researchPlans[side===1?'learner':'cpu']);
    const result=await parallelSearchShogi(state,weights,Math.min(3,side===1?shogiLearnerDepth():profile.depth),{budgetMs:95,forceRandom:false});
    if(!result?.move){winner=-side;reason='探索失敗';break;}
    const beforeKey=shogiEngine.positionKey(state),move=result.move,next=shogiEngine.applyMove(state,move),text=shogiEngine.moveText(state,move),tags=shogiEngine.tacticalTags(state,move,next),gaveCheck=shogiEngine.inCheck(next,next.turn);
@@ -2914,21 +3018,36 @@ async function runShogiSelfPlayResearch(){
    if(!legalAfter.length){winner=-state.turn;reason=shogiEngine.inCheck(state,state.turn)?'詰み':'合法手なし（手詰まり）';break;}
    const repetition=shogiRepetitionOutcome(positionTrail,records,key,state.ply);positionTrail.push({key,ply:state.ply});state.history.push(key);
    if(repetition){winner=repetition.winner;reason=repetition.reason;break;}
-   if((ply+1)%8===0)$('shogiResearchStatus').textContent=`自己対戦研究中\n現在 ${state.ply}手\n勝敗・千日手が確定するまで継続します。`;
+   // Yield every two plies so Safari can paint, respond to touch, and run other page tasks.
+   if((ply+1)%2===0){
+    $('shogiResearchStatus').textContent=`自己対戦研究中
+現在 ${state.ply}手／勝敗未確定
+探索を小分けにし、端末が一度に処理する時間を抑えています。`;
+    $('shogiSelfPlayBtn').textContent=`研究中 ${state.ply}手`;
+    await shogiYieldMainThread(lowPowerDevice?28:10);
+   }
   }
   const l=shogiBrain.learner;l.selfPlayGames=(l.selfPlayGames||0)+1;
   if(winner===1)l.selfPlayWins=(l.selfPlayWins||0)+1;else if(winner===-1)l.selfPlayLosses=(l.selfPlayLosses||0)+1;else if(winner===0)l.selfPlayDraws=(l.selfPlayDraws||0)+1;else l.selfPlayLimitEnds=(l.selfPlayLimitEnds||0)+1;
   const resultName=winner===1?'learner':winner===-1?'cpu':winner===0?'draw':'limit';
-  l.researchArchives=l.researchArchives||[];l.researchArchives.push({at:Date.now(),cpuLevel:l.cpuLevel,winner:resultName,reason,plies:records.length,selfPlay:true,moves:records.map(r=>({ply:r.ply,side:r.side,beforeKey:r.beforeKey,afterKey:r.afterKey,moveKey:r.moveKey,text:r.text,to:r.to,from:r.from,drop:r.drop,tags:(r.tags||[]).slice(0,5),gaveCheck:!!r.gaveCheck,patternKey:r.patternKey||''}))});l.researchArchives=l.researchArchives.slice(-24);
+  l.researchArchives=l.researchArchives||[];
+  l.researchArchives.push({at:Date.now(),cpuLevel:l.cpuLevel,winner:resultName,reason,plies:records.length,selfPlay:true,moves:records.map(r=>({ply:r.ply,side:r.side,beforeKey:r.beforeKey,afterKey:r.afterKey,moveKey:r.moveKey,text:r.text,to:r.to,from:r.from,drop:r.drop,tags:(r.tags||[]).slice(0,5),gaveCheck:!!r.gaveCheck,patternKey:r.patternKey||''}))});
+  l.researchArchives=l.researchArchives.slice(-24);
   if(winner!==null)shogiUpdateOpponentModel(records,winner);
   for(const r of records){if(winner===null||r.side!==1||r.ply>16)continue;const entry=l.openingBook[r.beforeKey]||(l.openingBook[r.beforeKey]={moves:{}}),st=entry.moves[r.moveKey]||(entry.moves[r.moveKey]={moveKey:r.moveKey,moveText:r.text,prefix:r.moveKey,lineText:r.text,n:0,w:0,l:0,d:0,evalSum:0});st.n++;if(winner===1)st.w++;else if(winner===-1)st.l++;else st.d++;}
-  l.experience=(l.experience||0)+Math.max(1,Math.round(records.length/8));shogiRebuildOpeningResearch();
-  shogiLearnCpuOpenings(records,winner);shogiDiscoverStrategies(records,winner);
+  l.experience=(l.experience||0)+Math.max(1,Math.round(records.length/8));
+  shogiRebuildOpeningResearch();shogiLearnCpuOpenings(records,winner);shogiDiscoverStrategies(records,winner);
   const resultLabel=winner===1?'学習AI側勝利':winner===-1?'適応CPU側勝利':winner===0?'引き分け':'結果なし（研究上限）';
   l.lastResult=`自己対戦研究 ${l.selfPlayGames}局目：${records.length}手／${resultLabel}（${reason}）。`;
-  saveShogiBrain();$('shogiResearchStatus').textContent=`自己対戦研究完了\n手数：${records.length}\n結果：${resultLabel}／${reason}\n経験 +${Math.max(1,Math.round(records.length/8))} XP\n累計研究対局：${l.selfPlayGames}局（勝${l.selfPlayWins||0}・敗${l.selfPlayLosses||0}・分${l.selfPlayDraws||0}・上限終了${l.selfPlayLimitEnds||0}）\n相手の傾向学習：${l.opponentModel.samples}件`;
+  saveShogiBrain();
+  $('shogiResearchStatus').textContent=`自己対戦研究完了
+手数：${records.length}
+結果：${resultLabel}／${reason}
+経験 +${Math.max(1,Math.round(records.length/8))} XP
+累計研究対局：${l.selfPlayGames}局（勝${l.selfPlayWins||0}・敗${l.selfPlayLosses||0}・分${l.selfPlayDraws||0}・上限終了${l.selfPlayLimitEnds||0}）
+相手の傾向学習：${l.opponentModel.samples}件`;
  }catch(err){$('shogiResearchStatus').textContent='自己対戦研究でエラー：'+String(err);}
- finally{shogiResearchBusy=false;$('shogiSelfPlayBtn').disabled=false;$('shogiSelfPlayBtn').textContent=originalLabel;renderShogi();}
+ finally{shogiResearchBusy=false;$('shogiSelfPlayBtn').disabled=false;$('shogiOpeningScanBtn').disabled=false;$('shogiMateScanBtn').disabled=false;$('shogiSelfPlayBtn').textContent=originalLabel;renderShogi();}
 }
 function shogiRenderResultPanels(){
  const resultBox=$('shogiLastResult');
@@ -3099,6 +3218,7 @@ async function shogiRunTurboBatch(serial,speedNow){
    totalNodes+=result.nodes||0;
    shogiRecordMove(result.move,side,{...result,label:`高速一括研究 ×${speedNow}／深度${result.depth||cfg.depth}`},true);
    done++;
+   if(done%2===0)await shogiYieldMainThread(lowPowerDevice?24:8);
   }
  }catch(err){shogiRuntime.lastSearch='高速研究エラー：'+String(err);detailLog('将棋高速一括探索エラー：'+String(err));}
  if(serial===shogiRuntime.serial){shogiRuntime.thinking=false;shogiRuntime.lastSearch=`高速一括研究 ×${speedNow}：${done}手／${totalNodes.toLocaleString('ja-JP')} nodes`;if(!shogiRuntime.ended)$('shogiTurn').textContent=`高速研究 ×${speedNow}｜今回 ${done}手処理｜深度 ${cfg.depth}・1手 ${cfg.budgetMs}ms`;renderShogi();}
@@ -3276,20 +3396,51 @@ try{const saved=JSON.parse(localStorage.getItem(PARALLEL_SAVE_KEY)||'null');if(s
 let parallelWorkers=[],parallelBlobUrl=null,parallelJobId=0,parallelPending=new Map(),parallelBroadcast=null,parallelSnapshotTimer=null,parallelSaveTimer=null;
 function parallelWorkerSource(){return `
  const ENGINE=(${createShogiEngine.toString()})();
- let wid=0,tickNo=0,running=false,snapshot={},timer=null;
- function research(domain,p){
-  if(domain==='duel'){const all=[...(p.blue||[]),...(p.red||[])],groups={};for(const x of all){const k=x.signature||'unknown';groups[k]??={n:0,w:0};groups[k].n++;if(x.won)groups[k].w++;}const ranked=Object.entries(groups).map(([k,v])=>({key:k,n:v.n,rate:v.w/v.n})).filter(x=>x.n>=2).sort((a,b)=>b.rate-a.rate);return {focus:ranked[0]?.key||'新規戦術の探索',weak:ranked.slice(-3).map(x=>x.key),sample:all.length};}
-  if(domain==='study'){const arr=Object.entries(p.mastery||{}).map(([topic,v])=>({topic,mastery:Number(v)||0})).sort((a,b)=>a.mastery-b.mastery);return {reviewTopics:arr.slice(0,12).map(x=>x.topic),mean:arr.length?arr.reduce((a,x)=>a+x.mastery,0)/arr.length:0,topics:arr.length};}
-  if(domain==='coop'){const rs=p.roleStats||{},b=(rs.blue?.switch?.avg||99)+(rs.blue?.engineer?.avg||99),r=(rs.red?.switch?.avg||99)+(rs.red?.engineer?.avg||99);return {preferredSwitch:b<=r?'blue':'red',blueCost:Number(b.toFixed(2)),redCost:Number(r.toFixed(2)),reason:'直近の役割別所要時間'};}
-  const st=p.shogi;if(st&&st.board){const state={board:st.board,hands:st.hands,turn:st.turn,ply:st.ply||0,history:[]},moves=ENGINE.legalMoves(state);return {legal:moves.length,side:st.turn,opening:moves.length>10?'展開重視':'終盤精密化'};}return {legal:0,side:1,opening:'中央重視'};
+ let wid=0,snapshot={},activeSearchToken=0;
+ function sendSearchResult(d,legal,best,totalNodes,totalTTHits,doneDepth,stopped){
+  if(!best){const move=legal[0];if(!move){postMessage({type:'searchResult',id:d.id,worker:wid,move:null,score:-Infinity,nodes:totalNodes,depth:doneDepth,legalCount:0});return;}
+   const next=ENGINE.applyMove(d.state,move),nextLegal=ENGINE.legalMoves(next);
+   best={move,score:ENGINE.evaluate(next,d.state.turn,d.weights),tags:ENGINE.tacticalTags(d.state,move,next)};
+   postMessage({type:'searchResult',id:d.id,worker:wid,move,score:best.score,nodes:totalNodes,depth:doneDepth,stopped:true,legalCount:legal.length,tags:best.tags,nextLegalCount:nextLegal.length,nextInCheck:ENGINE.inCheck(next,next.turn)});return;
+  }
+  const next=ENGINE.applyMove(d.state,best.move),nextLegal=ENGINE.legalMoves(next);
+  postMessage({type:'searchResult',id:d.id,worker:wid,move:best.move,score:best.score,nodes:totalNodes,ttHits:totalTTHits,depth:doneDepth,stopped:!!stopped,legalCount:legal.length,tags:best.tags||ENGINE.tacticalTags(d.state,best.move,next),nextLegalCount:nextLegal.length,nextInCheck:ENGINE.inCheck(next,next.turn)});
  }
- function loop(){if(!running)return;const domain=['duel','study','coop','shogi'][(tickNo+wid)%4],key=domain==='duel'?'duel':domain==='study'?'study':domain==='coop'?'coop':'shogi';let result={};try{result=research(domain,snapshot[key]||{});}catch(e){result={error:String(e)};}tickNo++;postMessage({type:'research',worker:wid,domain,result,tick:tickNo,at:Date.now()});timer=setTimeout(loop,1150+(wid*90));}
- self.onmessage=e=>{const d=e.data||{};if(d.type==='init'){wid=d.worker||0;snapshot=d.snapshot||{};running=true;if(timer)clearTimeout(timer);loop();}
- else if(d.type==='update'){snapshot=d.snapshot||snapshot;}
- else if(d.type==='search'){try{const legal=ENGINE.legalMoves(d.state);if(!legal.length){postMessage({type:'searchResult',id:d.id,worker:wid,move:null,score:-Infinity,nodes:0,depth:0,legalCount:0});return;}if(d.forceRandom){const move=legal[Math.floor(Math.random()*legal.length)],next=ENGINE.applyMove(d.state,move),nextMoves=ENGINE.legalMoves(next);postMessage({type:'searchResult',id:d.id,worker:wid,move,score:0,nodes:0,depth:0,legalCount:legal.length,random:true,tags:ENGINE.tacticalTags(d.state,move,next),nextLegalCount:nextMoves.length,nextInCheck:ENGINE.inCheck(next,next.turn)});return;}const deadline=Date.now()+Math.max(d.fast?8:40,Number(d.budgetMs)||120),maxDepth=Math.max(1,Math.min(8,Number(d.depth)||1)),searchContext={tt:new Map(),killers:[],rootMove:''};let best=null,totalNodes=0,doneDepth=0,stopped=false,totalTTHits=0;for(let dep=1;dep<=maxDepth;dep++){if(Date.now()>=deadline)break;const r=ENGINE.searchRoot(d.state,legal,d.state.turn,d.weights,dep,d.worker,d.count,deadline,searchContext);totalNodes+=r.nodes||0;totalTTHits+=r.ttHits||0;if(r.move&&!r.stopped){best=r;doneDepth=dep;}else if(!best&&r.move){best=r;doneDepth=dep;}if(r.stopped){stopped=true;break;}}if(!best)best={move:legal[0],score:ENGINE.evaluate(ENGINE.applyMove(d.state,legal[0]),d.state.turn,d.weights),nodes:0};const selectedNext=ENGINE.applyMove(d.state,best.move),selectedLegal=ENGINE.legalMoves(selectedNext);postMessage({type:'searchResult',id:d.id,worker:wid,move:best.move,score:best.score,nodes:totalNodes,ttHits:totalTTHits,depth:doneDepth,stopped,legalCount:legal.length,tags:best.tags||ENGINE.tacticalTags(d.state,best.move,selectedNext),nextLegalCount:selectedLegal.length,nextInCheck:ENGINE.inCheck(selectedNext,selectedNext.turn)});}catch(err){postMessage({type:'searchResult',id:d.id,worker:wid,move:null,score:-Infinity,nodes:0,error:String(err)});}}
- else if(d.type==='stop'){running=false;if(timer)clearTimeout(timer);}
+ function beginSearch(d){
+  const token=++activeSearchToken;
+  try{
+   const legal=ENGINE.legalMoves(d.state);
+   if(!legal.length){postMessage({type:'searchResult',id:d.id,worker:wid,move:null,score:-Infinity,nodes:0,depth:0,legalCount:0});return;}
+   if(d.forceRandom){const move=legal[Math.floor(Math.random()*legal.length)],next=ENGINE.applyMove(d.state,move),nextMoves=ENGINE.legalMoves(next);postMessage({type:'searchResult',id:d.id,worker:wid,move,score:0,nodes:0,depth:0,legalCount:legal.length,random:true,tags:ENGINE.tacticalTags(d.state,move,next),nextLegalCount:nextMoves.length,nextInCheck:ENGINE.inCheck(next,next.turn)});return;}
+   const deadline=Date.now()+Math.max(d.fast?8:40,Number(d.budgetMs)||120),maxDepth=Math.max(1,Math.min(8,Number(d.depth)||1));
+   const searchContext={tt:new Map(),killers:[],rootMove:''};
+   let best=null,totalNodes=0,doneDepth=0,totalTTHits=0,depth=1,stopped=false;
+   const finish=()=>{if(token!==activeSearchToken)return;sendSearchResult(d,legal,best,totalNodes,totalTTHits,doneDepth,stopped);};
+   const depthStep=()=>{
+    if(token!==activeSearchToken)return;
+    if(Date.now()>=deadline||depth>maxDepth){finish();return;}
+    const r=ENGINE.searchRoot(d.state,legal,d.state.turn,d.weights,depth,d.worker,d.count,deadline,searchContext);
+    totalNodes+=r.nodes||0;totalTTHits+=r.ttHits||0;
+    if(r.move){best=r;doneDepth=depth;}
+    if(r.stopped){stopped=true;finish();return;}
+    depth++;
+    if(depth<=maxDepth&&Date.now()<deadline){
+     // Give the worker event loop a chance to process stop/new-search messages.
+     setTimeout(depthStep,d.fast?0:8);
+    }else finish();
+   };
+   setTimeout(depthStep,0);
+  }catch(err){postMessage({type:'searchResult',id:d.id,worker:wid,move:null,score:-Infinity,nodes:0,error:String(err)});}
+ }
+ self.onmessage=e=>{
+  const d=e.data||{};
+  if(d.type==='init'){wid=d.worker||0;snapshot=d.snapshot||{};}
+  else if(d.type==='update'){snapshot=d.snapshot||snapshot;}
+  else if(d.type==='search')beginSearch(d);
+  else if(d.type==='stop'){activeSearchToken++;}
  };
  `;}
+
 function makeParallelSnapshot(){return {
  duel:{blue:(blue.policyArchive||[]).slice(-60).map(x=>({signature:x.signature,won:!!x.won})),red:(red.policyArchive||[]).slice(-60).map(x=>({signature:x.signature,won:!!x.won}))},
  study:{mastery:Object.fromEntries(Object.entries(academicState.mastery||{}).slice(-1200))},
@@ -3300,11 +3451,21 @@ function saveParallelResearch(){try{localStorage.setItem(PARALLEL_SAVE_KEY,JSON.
 function parallelOnMessage(e){const d=e.data||{};if(d.type==='research'){parallelResearchState.cycles++;parallelResearchState[d.domain]={...parallelResearchState[d.domain],...d.result,cycles:(parallelResearchState[d.domain]?.cycles||0)+1};parallelResearchState.lastAt=d.at;if(d.domain==='coop'&&d.result.preferredSwitch)coopRecord.recommendedSwitch=d.result.preferredSwitch;if(parallelBroadcast)try{parallelBroadcast.postMessage({type:'research',domain:d.domain,result:d.result,at:d.at});}catch(_){}if(parallelResearchState.cycles%12===0)saveParallelResearch();}
  else if(d.type==='searchResult'){const r=parallelPending.get(d.id);if(r){r.results.push(d);r.done++;if(r.done>=r.count){parallelPending.delete(d.id);if(r.timer)clearTimeout(r.timer);const best=r.results.filter(x=>x.move).sort((a,b)=>(b.score-a.score)||(b.depth-a.depth))[0]||null;r.resolve(best?{...best,label:`Worker並列・深度${best.depth||0}・${best.nodes||0} nodes`}:null);}}}}
 function initParallelThinking(){
- if(typeof Worker==='undefined'||typeof Blob==='undefined'){ $('parallelStatus').textContent='並列脳 非対応';return; }
- try{const source=parallelWorkerSource();parallelBlobUrl=URL.createObjectURL(new Blob([source],{type:'text/javascript'}));const n=Math.max(1,Math.min(2,(navigator.hardwareConcurrency||3)-1));for(let i=0;i<n;i++){const w=new Worker(parallelBlobUrl);w.onmessage=parallelOnMessage;w.onerror=()=>{$('parallelStatus').textContent='Worker再起動待ち';};parallelWorkers.push(w);w.postMessage({type:'init',worker:i,snapshot:makeParallelSnapshot()});}if('BroadcastChannel'in window){parallelBroadcast=new BroadcastChannel('ai-observation-parallel-v1');parallelBroadcast.onmessage=e=>{if(e.data?.type==='research'){const d=e.data;parallelResearchState[d.domain]={...parallelResearchState[d.domain],...d.result,cycles:(parallelResearchState[d.domain]?.cycles||0)+1};}};}$('parallelStatus').textContent=`並列脳 ${n} Worker 稼働`;
-  parallelSnapshotTimer=setInterval(()=>{const snap=makeParallelSnapshot();for(const w of parallelWorkers)w.postMessage({type:'update',snapshot:snap});},2500);
-  parallelSaveTimer=setInterval(saveParallelResearch,20000);
- }catch(e){console.warn('parallel worker init failed',e);$('parallelStatus').textContent='並列脳 ローカル代替';}
+ if(typeof Worker==='undefined'||typeof Blob==='undefined'){ $('parallelStatus').textContent='Worker非対応';return; }
+ try{
+  const source=parallelWorkerSource();parallelBlobUrl=URL.createObjectURL(new Blob([source],{type:'text/javascript'}));
+  const cores=Math.max(1,Number(navigator.hardwareConcurrency)||2);
+  // Touch devices intentionally use a single worker to avoid competing with Safari's renderer.
+  const n=lowPowerDevice?1:Math.max(1,Math.min(2,cores-1));
+  for(let i=0;i<n;i++){
+   const w=new Worker(parallelBlobUrl);w.onmessage=parallelOnMessage;
+   w.onerror=()=>{$('parallelStatus').textContent='Workerエラー／再読込で復旧';};
+   parallelWorkers.push(w);w.postMessage({type:'init',worker:i,snapshot:{}});
+  }
+  $('parallelStatus').textContent=`${lowPowerDevice?'低負荷':'並列'} ${n} Worker（要求時のみ探索）`;
+  // Workers are idle until a match/research action explicitly requests a search.
+  parallelSaveTimer=setInterval(()=>{if(document.visibilityState==='visible')saveParallelResearch();},60000);
+ }catch(e){console.warn('parallel worker init failed',e);$('parallelStatus').textContent='Workerなし・軽量代替';}
 }
 function parallelSearchShogi(state,weights,depth,options={}){const requestedBudget=Math.max(8,Math.min(1600,Number(options.budgetMs)||160)),budgetMs=options.fast?requestedBudget:Math.max(45,requestedBudget),forceRandom=!!options.forceRandom;if(!parallelWorkers.length){return new Promise(resolve=>setTimeout(()=>{try{const moves=shogiEngine.legalMoves(state);if(!moves.length){resolve(null);return;}if(forceRandom){const move=moves[Math.floor(Math.random()*moves.length)],next=shogiEngine.applyMove(state,move),nextLegal=shogiEngine.legalMoves(next);resolve({move,nodes:0,depth:0,label:'Worker非対応・合法手から選択',tags:shogiEngine.tacticalTags(state,move,next),nextLegalCount:nextLegal.length,nextInCheck:shogiEngine.inCheck(next,next.turn)});return;}const fallbackDepth=Math.max(1,Math.min(6,Number(depth)||1));const r=shogiEngine.searchRoot(state,moves,state.turn,weights,fallbackDepth,0,1,Date.now()+Math.min(220,budgetMs));if(r?.move){const next=shogiEngine.applyMove(state,r.move),nextLegal=shogiEngine.legalMoves(next);resolve({...r,label:'Worker非対応・軽量探索',tags:r.tags||shogiEngine.tacticalTags(state,r.move,next),nextLegalCount:nextLegal.length,nextInCheck:shogiEngine.inCheck(next,next.turn)});}else{const next=shogiEngine.applyMove(state,moves[0]),nextLegal=shogiEngine.legalMoves(next);resolve({move:moves[0],nodes:0,depth:0,label:'軽量合法手 fallback',tags:shogiEngine.tacticalTags(state,moves[0],next),nextLegalCount:nextLegal.length,nextInCheck:shogiEngine.inCheck(next,next.turn)});}}catch(_){resolve(null);}},0));}
  const count=forceRandom?1:parallelWorkers.length;return new Promise(resolve=>{const id=++parallelJobId;const pending={resolve,count,done:0,results:[],timer:null};pending.timer=setTimeout(()=>{if(!parallelPending.has(id))return;parallelPending.delete(id);const best=pending.results.filter(x=>x.move).sort((a,b)=>(b.score-a.score)||(b.depth-a.depth))[0]||null;if(best)resolve({...best,label:`Worker時間上限・深度${best.depth||0}の暫定手`});else{try{const quick=shogiEngine.legalMoves(state);if(!quick.length){resolve(null);}else{const move=quick[0],next=shogiEngine.applyMove(state,move),nextLegal=shogiEngine.legalMoves(next);resolve({move,nodes:0,depth:0,label:'Worker応答遅延・最小合法手',tags:shogiEngine.tacticalTags(state,move,next),nextLegalCount:nextLegal.length,nextInCheck:shogiEngine.inCheck(next,next.turn)});}}catch(_){resolve(null);}}},budgetMs+(options.fast?140:560));parallelPending.set(id,pending);for(let i=0;i<count;i++){const w=parallelWorkers[i];w.postMessage({type:'search',id,state,weights,depth,worker:i,count,budgetMs,forceRandom,fast:!!options.fast});}});}
@@ -3357,13 +3518,13 @@ $('logShortenBtn').addEventListener('click',()=>{if(worldTestSession?.active)ret
 $('resetBtn').addEventListener('click',()=>{paused=false;$('pauseBtn').textContent='Ⅱ 一時停止';resetLearning();});
 
 $('learnSummaryBtn').addEventListener('click',showLearningSummary);$('benchmarkBtn').addEventListener('click',runAICapabilityBenchmark);$('selfTestBtn').addEventListener('click',()=>{const r=runLearningEngineSelfTest(),sim=runLearningSimulationSelfTest(),tri=runTriSimulationSelfTests();const bridge=verifyStairBridgeTemporarily();$('summaryText').textContent='思考→実行監査検査\n'+runExecutionAuditSelfTest().checks.map(c=>`${c.ok?'PASS':'FAIL'}：${c.name}`).join('\n')+'\n\n現在の実行記録\n青：'+executionSummary(blue)+'\n赤：'+executionSummary(red)+'\n\niPad内PPO検査\n'+runPpoSelfTests().checks.map(c=>`${c.ok?'PASS':'FAIL'}：${c.name}`).join('\n')+'\n\n内部機構検査\n'+r.checks.map(c=>`${c.ok?'PASS':'FAIL'}：${c.name}`).join('\n')+'\n\n学習シミュレーション\n'+sim.checks.map(c=>`${c.ok?'PASS':'FAIL'}：${c.name} — ${c.detail}`).join('\n')+'\n\n3シミュレーション検査\n'+tri.checks.map(c=>`${c.ok?'PASS':'FAIL'}：${c.name} — ${c.detail}`).join('\n')+'\n\n統合AI基盤検査\n'+runFullAICoreSelfTest().checks.map(c=>`${c.ok?'PASS':'FAIL'}：${c.name}`).join('\n')+'\n\n階段ブリッジ：'+JSON.stringify(bridge)+'\n\n実機での長時間対戦結果は別途確認が必要です。';$('summaryModal').hidden=false;});$('summaryCloseBtn').addEventListener('click',()=>{$('summaryModal').hidden=true;});$('summaryModal').addEventListener('click',e=>{if(e.target===$('summaryModal'))$('summaryModal').hidden=true;});document.addEventListener('keydown',e=>{if(e.key==='Escape')$('summaryModal').hidden=true;});
-window.addEventListener('resize',resize);document.addEventListener('visibilitychange',()=>{if(document.hidden){saveTriBrain();saveShogiBrain();saveParallelResearch();try{const snap=makeParallelSnapshot();for(const w of parallelWorkers)w.postMessage({type:'update',snapshot:snap});}catch(_){}}else{clock.getDelta();updateHUD();if(simulationMode==='shogi')renderShogi();}});window.addEventListener('pagehide',()=>{saveTriBrain();saveShogiBrain();saveParallelResearch();});
-function updateAILabDeviceStatus(){const ua=navigator.userAgent||'',gpu=!!navigator.gpu;let text=`端末：${/iPad|iPhone/.test(ua)?'iOS/iPadOS':'ブラウザ端末'}／WebGPU API：${gpu?'あり':'なし'}／保存領域：${typeof indexedDB!=='undefined'?'IndexedDBあり':'確認不可'}。`;if(!gpu)text+='現在の環境ではWASM/CPU実行を使います。LLMは低速になる可能性があります。';else text+='WebGPUを検出しました。実際のモデル初期化に失敗した場合はWASMへ切り替えます。';$('aiLabDeviceStatus').textContent=text;}
+window.addEventListener('resize',resize);document.addEventListener('visibilitychange',()=>{if(document.hidden){saveTriBrain();saveShogiBrain();saveParallelResearch();}else{clock.getDelta();updateHUD();if(simulationMode==='shogi')renderShogi();}});window.addEventListener('pagehide',()=>{saveTriBrain();saveShogiBrain();saveParallelResearch();for(const w of parallelWorkers)try{w.postMessage({type:'stop'});}catch(_){}});
+function updateAILabDeviceStatus(){const ua=navigator.userAgent||'',gpu=!!navigator.gpu;let text=`端末：${/iPad|iPhone/.test(ua)?'iOS/iPadOS':'ブラウザ端末'}／WebGPU API：${gpu?'あり':'なし'}／保存領域：${typeof indexedDB!=='undefined'?'IndexedDBあり':'確認不可'}。${lowPowerDevice?'低負荷設定：Worker 1基・描画30fps・影512px。':'通常設定：Worker最大2基。'}`;if(!gpu)text+='現在の環境ではWASM/CPU実行を使います。LLMは低速になる可能性があります。';else text+='WebGPUを検出しました。実際のモデル初期化に失敗した場合はWASMへ切り替えます。';$('aiLabDeviceStatus').textContent=text;}
 $('aiLabOpenBtn').addEventListener('click',()=>{$('aiLabModal').hidden=false;updateAILabDeviceStatus();refreshAILab();});$('aiLabCloseBtn').addEventListener('click',()=>$('aiLabModal').hidden=true);$('aiLabModal').addEventListener('click',e=>{if(e.target===$('aiLabModal'))$('aiLabModal').hidden=true;});$('aiLabLoadBtn').addEventListener('click',loadLocalLanguageAI);$('aiLabReleaseBtn').addEventListener('click',releaseLocalLanguageAI);$('aiLabAskBtn').addEventListener('click',askLocalAIFromLab);$('aiLabAskStudyBtn').addEventListener('click',askLocalAIAboutStudy);$('aiLabStudyLink').addEventListener('click',askLocalAIAboutStudy);$('aiLabRefreshBtn').addEventListener('click',()=>{refreshAILab();updateAILabDeviceStatus();});$('studyLocalAIButton').addEventListener('click',()=>{$('aiLabModal').hidden=false;updateAILabDeviceStatus();refreshAILab();askLocalAIAboutStudy();});$('aiLabPrompt').value='4つのAIの学習状況を、機械学習・探索・ルールベースに分けて評価するための監査観点を提案してください。';
 function runFullAICoreSelfTest(){const checks=[],academicBackup=JSON.parse(JSON.stringify(academicState.skillModel||{})),hadCoopPolicy=!!coopRecord.policy,coopBackup=hadCoopPolicy?JSON.parse(JSON.stringify(coopRecord.policy)):null;try{const a0=academicSkillEnsureModel().params.slice();const q={subject:'math',topic:'__ai_core_test__',grade:10,challengeLevel:8,calc:{op:'known',value:2}};academicSkillTrain(q,true);checks.push({name:'勉学の9→32→1技能MLPが回答結果から重みを更新',ok:academicState.skillModel.updates>0&&academicState.skillModel.params.some((v,i)=>v!==a0[i])});const p=coopPolicyGet(),f=Array(9).fill(.2),d={features:f,action:0},before=p.params.slice();coopPolicyTrain(d,.9);checks.push({name:'協力AIの9→32→2役割MLPが報酬から更新',ok:p.updates>0&&p.params.some((v,i)=>v!==before[i])});const st=shogiEngine.initialState(),ft=shogiEngine.positionFeatures(st),net=shogiEnsureValueNet(),old=net.weights.slice(),mock=st.board.findIndex(x=>x&&x.s===1&&x.t==='P'),altered=shogiEngine.cloneState(st);altered.board[mock]=null;const base=shogiEngine.evaluate(altered,1,{valueNet:old}),testWeights=old.slice();testWeights[896]=1.5;const withNet=shogiEngine.evaluate(altered,1,{valueNet:testWeights});checks.push({name:'将棋12→64→1局面価値ネットが探索評価に反映',ok:ft.length===12&&old.length===897&&Number.isFinite(withNet)&&Math.abs(withNet-base)>0.001});const pp=runPpoSelfTests();checks.push({name:'対戦AIの64ユニットPPOが実際に方策重みを更新',ok:pp.ok&&PPO_CONFIG.hidden===64&&PPO_LAYOUT.total===3026});}catch(e){checks.push({name:'統合AI自己検査例外',ok:false,error:String(e)});}finally{academicState.skillModel=academicBackup.params?academicBackup:{version:2,params:Array(353).fill(0),samples:0,updates:0,lastLoss:0};if(hadCoopPolicy)coopRecord.policy=coopBackup;else delete coopRecord.policy;}return {ok:checks.every(c=>c.ok),checks};}
 
 buildArena();buildRig(blue);buildRig(red);const restored=restoreLearning();startTrial();runStartupArchitectureChecks();document.body.dataset.simMode='duel';renderAcademicPanel();renderShogi();if(restored){log('note','保存された進化を復元',`累計${completedTrials}試行の勝敗履歴と作戦を復元。`);toast('学習を復元','勝敗から進化した作戦と成績を引き継ぎます。',1400);}else{log('note','実験開始：持ち運び作戦進化', '途中ポイントなし。試行の最後の勝敗だけで作戦を強化・変更します。');toast('AI TRIAL','青は最初の7秒間停止。赤は判断と移動が速く、両AIは自作作戦を試行ごとに進化させます。',2600);}resize();$('loader').style.display='none';renderShogi();initParallelThinking();
-let raf=0,lastHudT=0;function animate(){raf=requestAnimationFrame(animate);const real=Math.min(clock.getDelta(),.045);if(toastTimer>0){toastTimer-=real;if(toastTimer<=0)$('toast').classList.remove('show');}if(!paused&&gameState==='running'){if(simulationMode==='shogi'){accumulator=0;shogiStep(real*speed);}else{accumulator+=real*speed;const simStep=speed>=50?.04:(speed>=10?.03:.02);let safety=0;const maxSteps=Math.min(speed>=500?500:speed>=200?360:180,Math.max(24,Math.ceil(accumulator/simStep)+2));while(accumulator>=simStep&&safety<maxSteps){step(simStep);accumulator-=simStep;safety++;if(gameState!=='running'){accumulator=0;break;}}}}else{accumulator=0;}if(simulationMode==='duel'){pose(blue,real*Math.min(speed,4));pose(red,real*Math.min(speed,4));handleWorldVisuals();renderer.render(scene,camera);}if(simulationMode==='coop')drawCoop();if(performance.now()-lastHudT>220){lastHudT=performance.now();if(simulationMode==='duel')updateHUD();}}
+let raf=0,lastHudT=0,lastLowPowerPaint=0;function animate(){raf=requestAnimationFrame(animate);const real=Math.min(clock.getDelta(),.045);if(toastTimer>0){toastTimer-=real;if(toastTimer<=0)$('toast').classList.remove('show');}if(!paused&&gameState==='running'){if(simulationMode==='shogi'){accumulator=0;shogiStep(real*speed);}else{accumulator+=real*speed;const simStep=speed>=50?.04:(speed>=10?.03:.02);let safety=0;const maxSteps=Math.min(speed>=500?500:speed>=200?360:180,Math.max(24,Math.ceil(accumulator/simStep)+2));while(accumulator>=simStep&&safety<maxSteps){step(simStep);accumulator-=simStep;safety++;if(gameState!=='running'){accumulator=0;break;}}}}else{accumulator=0;}const now=performance.now(),paintDue=!lowPowerDevice||now-lastLowPowerPaint>=33;if(paintDue){lastLowPowerPaint=now;if(simulationMode==='duel'){pose(blue,real*Math.min(speed,4));pose(red,real*Math.min(speed,4));handleWorldVisuals();renderer.render(scene,camera);}if(simulationMode==='coop')drawCoop();}if(now-lastHudT>220){lastHudT=now;if(simulationMode==='duel')updateHUD();}}
 animate();
 function academicAnswerEngineSelfTest(){
  const checks=[];
