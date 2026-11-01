@@ -2067,7 +2067,13 @@ function refreshAILab(){if(!$('aiLabDuelMetrics'))return;const bm=ppoEnsureModel
 function localAIWorkerSource(){return `
 let generator=null;
 let generationBusy=false;
-function errorText(error){return String(error&&(error.stack||error.message)||error).slice(0,1200);}
+let activeStage='worker-start';
+function errorText(error){
+  const name=error&&error.name?String(error.name):'Error';
+  const message=error&&error.message?String(error.message):String(error||'不明な例外');
+  const stack=error&&error.stack?String(error.stack):'';
+  return (name+': '+message+'\n発生段階: '+activeStage+'\n'+(stack?'Stack:\n'+stack:'')).slice(0,3200);
+}
 function sendProgress(info){
   if(!info)return;
   const safe={};
@@ -2081,8 +2087,11 @@ self.onmessage=async function(event){
   const data=event.data||{};
   try{
     if(data.type==='load'){
+      activeStage='library-import';
       self.postMessage({type:'stage',stage:'library'});
       const lib=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2');
+      activeStage='wasm-config';
+      if(!lib||typeof lib.pipeline!=='function')throw new Error('Transformers.jsを読み込みましたがpipeline関数がありません。');
       if(lib.env){
         lib.env.allowRemoteModels=true;
         lib.env.useBrowserCache=true;
@@ -2090,12 +2099,21 @@ self.onmessage=async function(event){
         const wasm=lib.env.backends&&lib.env.backends.onnx&&lib.env.backends.onnx.wasm;
         if(wasm){wasm.numThreads=1;wasm.proxy=false;}
       }
+      activeStage='pipeline-init';
       self.postMessage({type:'stage',stage:'model'});
       generator=await lib.pipeline('text-generation',data.model,{
         device:'wasm',
         dtype:'q4',
-        progress_callback:sendProgress
+        progress_callback:sendProgress,
+        session_options:{
+          executionMode:'sequential',
+          graphOptimizationLevel:'basic',
+          enableCpuMemArena:false,
+          enableMemPattern:false,
+          logSeverityLevel:3
+        }
       });
+      activeStage='warmup-inference';
       self.postMessage({type:'stage',stage:'warmup'});
       await generator([{role:'user',content:'日本語で「準備完了」とだけ答えてください。'}],{
         max_new_tokens:4,do_sample:false,num_beams:1
@@ -2104,10 +2122,12 @@ self.onmessage=async function(event){
       return;
     }
     if(data.type==='generate'){
+      activeStage='generation-input-check';
       if(!generator)throw new Error('モデルがまだ初期化されていません。');
       if(generationBusy)throw new Error('現在、別の文章を生成しています。');
       generationBusy=true;
       try{
+        activeStage='generation-inference';
         const output=await generator([
           {role:'system',content:String(data.system||'あなたは日本語で考えるアシスタントです。').slice(0,1500)},
           {role:'user',content:String(data.prompt||'').slice(0,3200)}
@@ -2128,13 +2148,14 @@ self.onmessage=async function(event){
       return;
     }
     if(data.type==='release'){
+      activeStage='release';
       if(generator&&typeof generator.dispose==='function')await generator.dispose();
       generator=null;
       self.postMessage({type:'released'});
       return;
     }
   }catch(error){
-    self.postMessage({type:'error',message:errorText(error)});
+    self.postMessage({type:'error',message:errorText(error),phase:activeStage,name:error&&error.name?String(error.name):'Error',reason:error&&error.message?String(error.message):String(error||'不明な例外')});
   }
 };
 `;}
@@ -2233,8 +2254,8 @@ async function loadLocalLanguageAI(){
   toast('ローカル言語AI準備完了','WASM/CPUで動作します。ゲーム側とは別Workerで処理します。',1800);
  }catch(err){
   terminateLocalAIWorker();
-  localLanguageAI.status='error';localLanguageAI.error=String(err?.message||err).slice(0,360);
-  $('aiLabModelStatus').textContent='ロード失敗：'+localLanguageAI.error;
+  localLanguageAI.status='error';localLanguageAI.error=String(err?.message||err).slice(0,1200);
+  $('aiLabModelStatus').textContent='ロード失敗：\n'+localLanguageAI.error;
   detailLog('ローカルLLM読込失敗：'+localLanguageAI.error);
  }finally{
   localLanguageAI.busy=false;$('aiLabLoadBtn').disabled=false;$('aiLabReleaseBtn').disabled=false;$('aiLabAskBtn').disabled=false;refreshAILab();
