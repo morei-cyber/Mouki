@@ -166,10 +166,10 @@ body[data-sim-mode="shogi"] .simPanel{top:calc(58px + env(safe-area-inset-top))}
   </div>
   <div class="aiLabTile" style="margin-top:9px">
    <h3>端末内の日本語言語AI（任意ダウンロード）</h3>
-   <p id="aiLabModelStatus">未ロード。モデルを読み込むと、外部APIなしで端末内の文章生成を利用できます。初回は数百MB規模のモデルをダウンロードします。</p>
+   <p id="aiLabModelStatus">未ロード。外部APIなしで端末内の文章生成を利用できます。iPad向けの350M・Q4モデルを専用Workerで取得します（モデル本体データ約294MB）。</p>
    <div class="aiLabProgress"><i id="aiLabProgressFill"></i></div>
    <div class="aiLabActions"><button id="aiLabLoadBtn" class="primary">ローカル言語AIを読み込む</button><button id="aiLabReleaseBtn">モデルを解放</button><button id="aiLabRefreshBtn">学習状態を更新</button></div>
-   <p>モデル：Qwen2.5-0.5B-Instruct（4bit ONNX）。Transformers.js v4.3.2。WebGPU対応時はq4f16、非対応時はWASM/CPU用q4を使います。初回は約483〜786MBの取得が必要です。ファイル単位の進捗を表示し、ブラウザキャッシュを有効にして再訪時の再取得を抑えます。保存領域が消去された場合は再取得が必要です。生成は1回160トークンまでに制限し、端末負荷を抑えます。</p>
+   <p>モデル：LFM2.5-350M（日本語対応・4bit ONNX）。Transformers.js v4.3.2。iPadではWASM/CPUに固定し、専用Worker 1基で処理します。モデル本体データは約294MBです。WebGPUの誤検出やGPU初期化停止を避け、生成は最大128トークン、入力は最大約3,200文字に制限します。取得済みファイルはブラウザキャッシュの再利用を試みます。</p>
   </div>
   <div class="aiLabTile" style="margin-top:9px">
    <h3>ローカルAIに考えさせる</h3>
@@ -177,7 +177,7 @@ body[data-sim-mode="shogi"] .simPanel{top:calc(58px + env(safe-area-inset-top))}
    <div class="aiLabActions"><button id="aiLabAskBtn" class="primary">端末内AIに質問</button><button id="aiLabAskStudyBtn">現在の勉学問題を解く</button><button id="aiLabStudyLink">勉学タブから開く</button></div>
    <div id="aiLabOutput">言語モデルを読み込むと、ここに生成結果が表示されます。</div>
   </div>
-  <div class="aiLabFoot">注意：これは汎用人工知能（AGI）ではありません。ゲームごとの学習器・探索器・ローカル言語モデルを組み合わせた構成です。モデルの回答は誤ることがあるため、将棋の合法手や勉学の採点は専用エンジンで別途検証します。</div>
+  <div class="aiLabFoot">注意：これは汎用人工知能（AGI）ではありません。端末内の文章生成は日本語対応の350MモデルをWASM/CPUで実行します。iPadではGPUを無理に使用せず、専用Worker 1基・Q4量子化・短い入力／出力でメモリ負荷を抑えます。モデルの回答は誤ることがあるため、将棋の合法手や勉学の採点は専用エンジンで別途検証します。</div>
  </section>
 </div>
 <div id="worldTestHUD" class="hud" hidden>
@@ -2044,7 +2044,7 @@ let triBrain=loadTriBrain(),academicState=triBrain.academic,coopRecord=triBrain.
 let simulationMode='duel',selectedAcademicSubject='japanese',academicRuntime={mode:'idle',running:false,allSubjects:false,timer:0,cycle:0,last:null,lastOutput:null,exam:null},coopRuntime=null,coopSpeedIndex=0;
 const SPEED_LEVELS=[1,2,4,10,25,50,100,200,300,500];
 // Local language model is loaded only after an explicit tap; it never calls an API endpoint.
-let localLanguageAI={status:'unloaded',pipeline:null,busy:false,device:'unknown',error:'',model:'onnx-community/Qwen2.5-0.5B-Instruct',lastLoadAt:0};
+let localLanguageAI={status:'unloaded',worker:null,workerUrl:'',pending:null,busy:false,device:'unknown',error:'',model:'onnx-community/LFM2.5-350M-ONNX',lastLoadAt:0};
 function academicSkillFeatures(q){
  const subject=q?.subject||selectedAcademicSubject,keys=['japanese','math','english','science','social'],idx=Math.max(0,keys.indexOf(subject));
  const mastery=clamp(Number(academicState.mastery[q?.topic]||0),0,1),grade=clamp(Number(q?.grade||academicState.grades[subject]||7)/12,0,1),challenge=clamp(Number(q?.challengeLevel||academicState.examChallengeLevel||10)/10,0,1),st=academicState.subjectStats[subject]||{attempts:0,correct:0},acc=st.attempts?st.correct/st.attempts:.5,calc=q?.calc?1:0,fact=q?.factKey?1:0,shared=Number(triBrain.shared?.[ACADEMIC_SUBJECTS[idx]?.dimension]||0);
@@ -2062,65 +2062,205 @@ function academicSkillForward(x,m){const I=9,H=32,B1=I*H,WO=B1+H,OUT=WO+H,p=m.pa
 function academicSkillPredict(q){const m=academicSkillEnsureModel(),x=academicSkillFeatures(q);return academicSkillForward(x,m).prob;}
 function academicSkillTrain(q,correct){const m=academicSkillEnsureModel(),x=academicSkillFeatures(q),o=academicSkillForward(x,m),y=correct?1:0,err=o.prob-y,I=9,H=32,B1=I*H,WO=B1+H,OUT=WO+H,p=m.params,lr=.012/Math.sqrt(1+m.updates/180),oldOut=p.slice(WO,OUT);for(let j=0;j<H;j++)p[WO+j]=clamp(p[WO+j]-lr*err*o.h[j],-5,5);p[OUT]=clamp(p[OUT]-lr*err,-5,5);for(let j=0;j<H;j++){const dz=err*oldOut[j]*(1-o.h[j]*o.h[j]),base=j*I;for(let k=0;k<I;k++)p[base+k]=clamp(p[base+k]-lr*dz*x[k],-5,5);p[B1+j]=clamp(p[B1+j]-lr*dz,-5,5);}m.samples++;m.updates++;m.lastLoss=-(y*Math.log(Math.max(1e-7,o.prob))+(1-y)*Math.log(Math.max(1e-7,1-o.prob)));}
 function academicChooseWeakSubject(){let best=selectedAcademicSubject,bestScore=Infinity;for(const x of ACADEMIC_SUBJECTS){const q={subject:x.key,grade:academicState.grades[x.key]||7,challengeLevel:academicState.examChallengeLevel||10,topic:x.key},prediction=academicSkillPredict(q),n=academicState.subjectStats[x.key]?.attempts||0,score=prediction+.12*Math.sqrt(n/(n+8));if(score<bestScore){bestScore=score;best=x.key;}}return best;}
-function localAIStatusText(){return localLanguageAI.status==='loaded'?`ロード済み／${localLanguageAI.device}／${localLanguageAI.model}`:localLanguageAI.status==='loading'?'ロード中…':localLanguageAI.status==='error'?`エラー：${localLanguageAI.error}`:'未ロード';}
-function refreshAILab(){if(!$('aiLabDuelMetrics'))return;const bm=ppoEnsureModel(blue),rm=ppoEnsureModel(red),sm=academicState.skillModel||{},cb=coopPolicyGet(),sn=shogiEnsureValueNet();$('aiLabDuelMetrics').textContent=`青：PPO 28→64→17（${PPO_LAYOUT.total.toLocaleString()}パラメータ）・更新 ${bm.updates}回・判断 ${bm.decisions}回\n赤：PPO 28→64→17（${PPO_LAYOUT.total.toLocaleString()}パラメータ）・更新 ${rm.updates}回・判断 ${rm.decisions}回\n経験列：最大 ${PPO_CONFIG.maxEpisodeSamples}件／更新エポック ${PPO_CONFIG.epochs}回`;$('aiLabStudyMetrics').textContent=`技能予測MLP 9→32→1（353パラメータ）：${sm.samples||0}回答・${sm.updates||0}更新（言語モデルとは別）\n概念習熟：${Object.keys(academicState.mastery||{}).length}種類／知識カード：${Object.keys(academicState.facts||{}).length}件\n正答率：${academicState.totalAttempts?(100*academicState.totalCorrect/academicState.totalAttempts).toFixed(1)+'%':'未計測'}\n言語AI：${localAIStatusText()}`;$('aiLabCoopMetrics').textContent=`役割選択MLP 9→32→2（386パラメータ）：${cb.samples}試行・${cb.updates}更新（タスク順序は固定）\n探索率：${cb.epsilon.toFixed(3)}／直近報酬：${cb.lastReward.toFixed(3)}\n成功：${coopRecord.wins||0}/${coopRecord.episodes||0}`;$('aiLabShogiMetrics').textContent=`局面価値MLP：12→64→1（897パラメータ）／${sn.samples}局面・${sn.updates}更新・${sn.games}対局\nCPU探索：軽量反復深化・局面キャッシュ・作戦バイアス／次戦準備50ms\n学習パラメータ ${sn.weights.length}個／探索AI：深度${shogiLearnerDepth()}\n棋譜：${shogiBrain.learner.gameArchives?.length||0}局／定跡 ${Object.keys(shogiBrain.learner.openingBook||{}).length}局面`;$('aiLabModelStatus').textContent=localAIStatusText()+(localLanguageAI.status==='unloaded'?'。初回ロードではモデルをダウンロードします。':'');}
-async function loadLocalLanguageAI(){
- if(localLanguageAI.status==='loaded'||localLanguageAI.busy)return;
- localLanguageAI.status='loading';localLanguageAI.busy=true;localLanguageAI.error='';
- $('aiLabLoadBtn').disabled=true;$('aiLabProgressFill').style.width='1%';
- $('aiLabModelStatus').textContent='Transformers.js v4.3.2を準備中…';
- const reportProgress=info=>{
+function localAIStatusText(){return localLanguageAI.status==='loaded'?`ロード済み／${localLanguageAI.device}／${localLanguageAI.model}`:localLanguageAI.status==='loading'?'ロード中（専用Worker）…':localLanguageAI.status==='error'?`エラー：${localLanguageAI.error}`:'未ロード';}
+function refreshAILab(){if(!$('aiLabDuelMetrics'))return;const bm=ppoEnsureModel(blue),rm=ppoEnsureModel(red),sm=academicState.skillModel||{},cb=coopPolicyGet(),sn=shogiEnsureValueNet();$('aiLabDuelMetrics').textContent=`青：PPO 28→64→17（${PPO_LAYOUT.total.toLocaleString()}パラメータ）・更新 ${bm.updates}回・判断 ${bm.decisions}回\n赤：PPO 28→64→17（${PPO_LAYOUT.total.toLocaleString()}パラメータ）・更新 ${rm.updates}回・判断 ${rm.decisions}回\n経験列：最大 ${PPO_CONFIG.maxEpisodeSamples}件／更新エポック ${PPO_CONFIG.epochs}回`;$('aiLabStudyMetrics').textContent=`技能予測MLP 9→32→1（353パラメータ）：${sm.samples||0}回答・${sm.updates||0}更新（言語モデルとは別）\n概念習熟：${Object.keys(academicState.mastery||{}).length}種類／知識カード：${Object.keys(academicState.facts||{}).length}件\n正答率：${academicState.totalAttempts?(100*academicState.totalCorrect/academicState.totalAttempts).toFixed(1)+'%':'未計測'}\n言語AI：${localAIStatusText()}`;$('aiLabCoopMetrics').textContent=`役割選択MLP 9→32→2（386パラメータ）：${cb.samples}試行・${cb.updates}更新（タスク順序は固定）\n探索率：${cb.epsilon.toFixed(3)}／直近報酬：${cb.lastReward.toFixed(3)}\n成功：${coopRecord.wins||0}/${coopRecord.episodes||0}`;$('aiLabShogiMetrics').textContent=`局面価値MLP：12→64→1（897パラメータ）／${sn.samples}局面・${sn.updates}更新・${sn.games}対局\nCPU探索：軽量反復深化・局面キャッシュ・作戦バイアス／次戦準備50ms\n学習パラメータ ${sn.weights.length}個／探索AI：深度${shogiLearnerDepth()}\n棋譜：${shogiBrain.learner.gameArchives?.length||0}局／定跡 ${Object.keys(shogiBrain.learner.openingBook||{}).length}局面`;$('aiLabModelStatus').textContent=localAIStatusText()+(localLanguageAI.status==='unloaded'?'。iPad向け350M・Q4モデルを初回取得します。':'');}
+function localAIWorkerSource(){return `
+let generator=null;
+let generationBusy=false;
+function errorText(error){return String(error&&(error.stack||error.message)||error).slice(0,1200);}
+function sendProgress(info){
   if(!info)return;
-  if(info.status==='progress_total'&&Number.isFinite(info.progress)){
-   const pct=clamp(info.progress,0,100);$('aiLabProgressFill').style.width=`${pct}%`;
-   $('aiLabModelStatus').textContent=`モデル全体の準備：${pct.toFixed(1)}%（ファイルごとの進捗を集計）`;
-   return;
+  const safe={};
+  for(const key of ['status','file','progress','loaded','total','name']){
+    const value=info[key];
+    if(typeof value==='string'||typeof value==='number'||typeof value==='boolean')safe[key]=value;
   }
-  if(info.status==='progress'&&Number.isFinite(info.progress)){
-   const pct=clamp(info.progress,0,100);$('aiLabProgressFill').style.width=`${pct}%`;
+  self.postMessage({type:'progress',info:safe});
+}
+self.onmessage=async function(event){
+  const data=event.data||{};
+  try{
+    if(data.type==='load'){
+      self.postMessage({type:'stage',stage:'library'});
+      const lib=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2');
+      if(lib.env){
+        lib.env.allowRemoteModels=true;
+        lib.env.useBrowserCache=true;
+        lib.env.useWasmCache=true;
+        const wasm=lib.env.backends&&lib.env.backends.onnx&&lib.env.backends.onnx.wasm;
+        if(wasm){wasm.numThreads=1;wasm.proxy=false;}
+      }
+      self.postMessage({type:'stage',stage:'model'});
+      generator=await lib.pipeline('text-generation',data.model,{
+        device:'wasm',
+        dtype:'q4',
+        progress_callback:sendProgress
+      });
+      self.postMessage({type:'stage',stage:'warmup'});
+      await generator([{role:'user',content:'日本語で「準備完了」とだけ答えてください。'}],{
+        max_new_tokens:4,do_sample:false,num_beams:1
+      });
+      self.postMessage({type:'loaded'});
+      return;
+    }
+    if(data.type==='generate'){
+      if(!generator)throw new Error('モデルがまだ初期化されていません。');
+      if(generationBusy)throw new Error('現在、別の文章を生成しています。');
+      generationBusy=true;
+      try{
+        const output=await generator([
+          {role:'system',content:String(data.system||'あなたは日本語で考えるアシスタントです。').slice(0,1500)},
+          {role:'user',content:String(data.prompt||'').slice(0,3200)}
+        ],{
+          max_new_tokens:128,
+          do_sample:false,
+          num_beams:1,
+          repetition_penalty:1.05
+        });
+        const generated=output&&output[0]?output[0].generated_text:null;
+        let answer='';
+        if(Array.isArray(generated)){
+          const last=generated[generated.length-1];
+          answer=typeof last==='string'?last:(last&&last.content)||'';
+        }else if(typeof generated==='string')answer=generated;
+        self.postMessage({type:'answer',answer:String(answer||'回答を生成できませんでした。').trim()});
+      }finally{generationBusy=false;}
+      return;
+    }
+    if(data.type==='release'){
+      if(generator&&typeof generator.dispose==='function')await generator.dispose();
+      generator=null;
+      self.postMessage({type:'released'});
+      return;
+    }
+  }catch(error){
+    self.postMessage({type:'error',message:errorText(error)});
+  }
+};
+`;}
+function terminateLocalAIWorker(){
+ const worker=localLanguageAI.worker;
+ localLanguageAI.worker=null;
+ if(worker){try{worker.terminate();}catch(_){}}
+ if(localLanguageAI.workerUrl){try{URL.revokeObjectURL(localLanguageAI.workerUrl);}catch(_){}localLanguageAI.workerUrl='';}
+}
+function settleLocalAIRequest(message){
+ const pending=localLanguageAI.pending;
+ if(!pending)return;
+ const expected={load:'loaded',generate:'answer',release:'released'}[pending.type];
+ if(message.type==='error'){
+  clearTimeout(pending.timer);localLanguageAI.pending=null;
+  pending.reject(new Error(message.message||'Worker内でエラーが発生しました。'));
+  return;
+ }
+ if(message.type!==expected)return;
+ clearTimeout(pending.timer);localLanguageAI.pending=null;
+ pending.resolve(message.type==='answer'?message.answer:true);
+}
+function handleLocalAIWorkerMessage(event){
+ const message=event.data||{};
+ if(message.type==='stage'){
+  const labels={library:'専用Workerで実行エンジンを準備中…',model:'日本語対応350M・Q4モデルを取得／展開中…',warmup:'ONNX初期化完了。短い推論テスト中…'};
+  $('aiLabModelStatus').textContent=labels[message.stage]||'ローカルAIを準備中…';
+  return;
+ }
+ if(message.type==='progress'){
+  const info=message.info||{};
+  if(info.status==='progress_total'&&Number.isFinite(info.progress)){
+   const pct=clamp(info.progress,0,100);$('aiLabProgressFill').style.width=`${Math.min(94,pct*.94)}%`;
+   $('aiLabModelStatus').textContent=`モデル全体の取得・準備：${pct.toFixed(1)}%`;
+  }else if(info.status==='progress'&&Number.isFinite(info.progress)){
+   const pct=clamp(info.progress,0,100);$('aiLabProgressFill').style.width=`${Math.min(90,pct*.9)}%`;
    const loaded=Number.isFinite(info.loaded)?`${(info.loaded/1048576).toFixed(1)}MB`:'';
    const total=Number.isFinite(info.total)&&info.total>0?` / ${(info.total/1048576).toFixed(1)}MB`:'';
    $('aiLabModelStatus').textContent=`取得中：${info.file||'モデルファイル'} ${pct.toFixed(1)}% ${loaded}${total}`;
-   return;
+  }else if(info.status==='done'&&info.file){
+   $('aiLabModelStatus').textContent=`取得済み：${info.file}／次の初期化へ進行中…`;
+  }else if(info.status==='ready'){
+   $('aiLabProgressFill').style.width='94%';
+   $('aiLabModelStatus').textContent='モデルファイル取得完了。WASM推論エンジンを初期化中…';
   }
-  if(info.status==='done'&&info.file)$('aiLabModelStatus').textContent=`取得済み：${info.file}`;
-  if(info.status==='ready'){$('aiLabProgressFill').style.width='98%';$('aiLabModelStatus').textContent='モデルファイル取得完了。推論エンジンを初期化中…';}
+  return;
+ }
+ if(message.type==='loaded')$('aiLabProgressFill').style.width='100%';
+ settleLocalAIRequest(message);
+}
+function ensureLocalAIWorker(){
+ if(localLanguageAI.worker)return localLanguageAI.worker;
+ if(typeof Worker==='undefined'||typeof Blob==='undefined'||!URL.createObjectURL)throw new Error('このブラウザでは専用Workerを利用できません。Safariを最新版に更新してください。');
+ const blob=new Blob([localAIWorkerSource()],{type:'text/javascript'});
+ const url=URL.createObjectURL(blob);
+ let worker;
+ try{worker=new Worker(url,{type:'module',name:'local-language-ai-worker'});}
+ catch(error){URL.revokeObjectURL(url);throw new Error('専用Workerを起動できません：'+String(error.message||error));}
+ localLanguageAI.worker=worker;localLanguageAI.workerUrl=url;
+ worker.onmessage=handleLocalAIWorkerMessage;
+ worker.onerror=event=>{
+  const pending=localLanguageAI.pending;
+  if(pending){clearTimeout(pending.timer);localLanguageAI.pending=null;pending.reject(new Error('Worker停止：'+String(event.message||'詳細不明')));}
  };
+ worker.onmessageerror=()=>{
+  const pending=localLanguageAI.pending;
+  if(pending){clearTimeout(pending.timer);localLanguageAI.pending=null;pending.reject(new Error('Workerとのデータ通信に失敗しました。'));}
+ };
+ return worker;
+}
+function localAIWorkerRequest(type,payload={},timeoutMs=900000){
+ const worker=ensureLocalAIWorker();
+ if(localLanguageAI.pending)return Promise.reject(new Error('前の処理がまだ終了していません。'));
+ return new Promise((resolve,reject)=>{
+  const timer=setTimeout(()=>{
+   localLanguageAI.pending=null;terminateLocalAIWorker();
+   reject(new Error(type==='load'?'初期化が15分以内に完了しませんでした。メモリ不足またはブラウザ側の停止の可能性があります。':'推論が時間内に完了しませんでした。'));
+  },timeoutMs);
+  localLanguageAI.pending={type,resolve,reject,timer};
+  try{worker.postMessage({type,...payload});}
+  catch(error){clearTimeout(timer);localLanguageAI.pending=null;reject(error);}
+ });
+}
+async function loadLocalLanguageAI(){
+ if(localLanguageAI.status==='loaded'||localLanguageAI.busy)return;
+ localLanguageAI.status='loading';localLanguageAI.busy=true;localLanguageAI.error='';
+ $('aiLabLoadBtn').disabled=true;$('aiLabReleaseBtn').disabled=true;$('aiLabAskBtn').disabled=true;
+ $('aiLabProgressFill').style.width='1%';
+ $('aiLabModelStatus').textContent='専用Workerを起動中。ゲーム本体とは別にモデルを読み込みます…';
  try{
-  const lib=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2');
-  if(lib.env){
-   lib.env.allowRemoteModels=true;
-   // Browser Cache API keeps successful downloads for later visits.
-   lib.env.useBrowserCache=true;
-   lib.env.useWasmCache=true;
-  }
-  let device='wasm';
-  try{if(navigator.gpu){const adapter=await navigator.gpu.requestAdapter();if(adapter)device='webgpu';}}catch(_){device='wasm';}
-  localLanguageAI.device=device;
-  $('aiLabModelStatus').textContent=`${device==='webgpu'?'WebGPU':'WASM/CPU'}用の4bitモデルを取得します。初回は時間がかかりますが、取得済みファイルはブラウザキャッシュを再利用します。`;
-  $('aiLabProgressFill').style.width='3%';
-  const makeOptions=useDevice=>({dtype:useDevice==='webgpu'?'q4f16':'q4',device:useDevice,progress_callback:reportProgress});
-  try{localLanguageAI.pipeline=await lib.pipeline('text-generation',localLanguageAI.model,makeOptions(device));}
-  catch(firstError){
-   if(device!=='webgpu')throw firstError;
-   localLanguageAI.device='wasm';
-   $('aiLabModelStatus').textContent='WebGPU初期化に失敗。WASM/CPU方式へ切替。保存済みファイルは可能な範囲で再利用します。';
-   localLanguageAI.pipeline=await lib.pipeline('text-generation',localLanguageAI.model,makeOptions('wasm'));
-  }
+  localLanguageAI.device='WASM/CPU・Q4・専用Worker 1基';
+  await localAIWorkerRequest('load',{model:localLanguageAI.model},15*60*1000);
   localLanguageAI.status='loaded';localLanguageAI.lastLoadAt=Date.now();
   $('aiLabProgressFill').style.width='100%';
-  $('aiLabModelStatus').textContent=`ロード完了／${localLanguageAI.device}。取得ファイルはブラウザキャッシュに保存されます。`;
-  toast('ローカル言語AI準備完了',`${localLanguageAI.device}で動作します。`,1600);
+  $('aiLabModelStatus').textContent=`ロード完了／${localLanguageAI.device}。短い推論テストも成功しました。`;
+  toast('ローカル言語AI準備完了','WASM/CPUで動作します。ゲーム側とは別Workerで処理します。',1800);
  }catch(err){
-  localLanguageAI.status='error';localLanguageAI.error=String(err?.message||err).slice(0,240);
+  terminateLocalAIWorker();
+  localLanguageAI.status='error';localLanguageAI.error=String(err?.message||err).slice(0,360);
   $('aiLabModelStatus').textContent='ロード失敗：'+localLanguageAI.error;
   detailLog('ローカルLLM読込失敗：'+localLanguageAI.error);
- }finally{localLanguageAI.busy=false;$('aiLabLoadBtn').disabled=false;refreshAILab();}
+ }finally{
+  localLanguageAI.busy=false;$('aiLabLoadBtn').disabled=false;$('aiLabReleaseBtn').disabled=false;$('aiLabAskBtn').disabled=false;refreshAILab();
+ }
 }
-async function runLocalLanguageAI(prompt,system='あなたは日本語で考える学習・ゲーム研究アシスタントです。分からない点は断定せず、手順と根拠を示してください。'){if(!localLanguageAI.pipeline)throw new Error('先にローカル言語AIを読み込んでください。');if(localLanguageAI.busy)throw new Error('現在、別の文章を生成しています。');localLanguageAI.busy=true;try{const out=await localLanguageAI.pipeline([{role:'system',content:system},{role:'user',content:String(prompt).slice(0,7000)}],{max_new_tokens:160,do_sample:false,num_beams:1});const generated=out?.[0]?.generated_text;let answer=Array.isArray(generated)?generated[generated.length-1]?.content:String(generated||'');return String(answer||'回答を生成できませんでした。').trim();}finally{localLanguageAI.busy=false;refreshAILab();}}
-function releaseLocalLanguageAI(){try{localLanguageAI.pipeline?.dispose?.();}catch(_){}localLanguageAI.pipeline=null;localLanguageAI.status='unloaded';localLanguageAI.error='';localLanguageAI.device='unknown';$('aiLabProgressFill').style.width='0%';$('aiLabModelStatus').textContent='モデル参照を解放しました。ブラウザのモデルキャッシュは再利用可能な場合があります。';refreshAILab();}
-async function askLocalAIFromLab(){const prompt=$('aiLabPrompt').value.trim();if(!prompt){$('aiLabOutput').textContent='質問を入力してください。';return;}$('aiLabAskBtn').disabled=true;$('aiLabOutput').textContent='ローカルモデルが推論中…';try{$('aiLabOutput').textContent=await runLocalLanguageAI(prompt);}catch(err){$('aiLabOutput').textContent='生成できませんでした：'+String(err.message||err);}finally{$('aiLabAskBtn').disabled=false;}}
-async function askLocalAIAboutStudy(){const q=academicRuntime.last;if(!q){$('aiLabOutput').textContent='先に勉学モードで問題を1問表示してください。';return;}const opts=q.responseType==='choice'?'\n選択肢：\n'+(q.choices||[]).map((x,i)=>`${i+1}. ${x}`).join('\n'):'';const prompt=`次の問題を自力で解いてください。正解・解説は与えていません。条件整理、解法、根拠、結論、検算を示してください。\n教科：${q.subject}\n問題：${q.prompt}${opts}`;$('aiLabPrompt').value=prompt;$('aiLabAskBtn').disabled=true;$('aiLabOutput').textContent='現在の問題をローカルモデルで推論中…';try{const text=await runLocalLanguageAI(prompt,'あなたは厳密な日本語の教科AIです。問題文と選択肢だけを使って解き、根拠のない断定を避け、記述式では途中過程を示してください。');$('aiLabOutput').textContent=text;const result=$('studyLocalAIResult');if(result){result.hidden=false;result.textContent='端末内LLMの独立回答（正解データはプロンプトに含めていません）：\n'+text;} }catch(err){$('aiLabOutput').textContent='生成失敗：'+String(err.message||err);}finally{$('aiLabAskBtn').disabled=false;}}
+async function runLocalLanguageAI(prompt,system='あなたは日本語で考える学習・ゲーム研究アシスタントです。分からない点は断定せず、手順と根拠を示してください。'){
+ if(localLanguageAI.status!=='loaded'||!localLanguageAI.worker)throw new Error('先にローカル言語AIを読み込んでください。');
+ if(localLanguageAI.busy)throw new Error('現在、別の文章を生成しています。');
+ localLanguageAI.busy=true;$('aiLabReleaseBtn').disabled=true;
+ try{return await localAIWorkerRequest('generate',{prompt:String(prompt).slice(0,3200),system:String(system).slice(0,1500)},300000);}
+ finally{localLanguageAI.busy=false;$('aiLabReleaseBtn').disabled=false;refreshAILab();}
+}
+async function releaseLocalLanguageAI(){
+ if(localLanguageAI.busy)return;
+ const hadWorker=!!localLanguageAI.worker;
+ if(hadWorker){
+  try{await localAIWorkerRequest('release',{},15000);}catch(_){}
+ }
+ terminateLocalAIWorker();
+ localLanguageAI.status='unloaded';localLanguageAI.error='';localLanguageAI.device='unknown';
+ $('aiLabProgressFill').style.width='0%';
+ $('aiLabModelStatus').textContent='実行中のモデルを解放しました。ダウンロード済みファイルはブラウザキャッシュに残る場合があります。';
+ refreshAILab();
+}
+async function askLocalAIFromLab(){const prompt=$('aiLabPrompt').value.trim();if(!prompt){$('aiLabOutput').textContent='質問を入力してください。';return;}$('aiLabAskBtn').disabled=true;$('aiLabOutput').textContent='専用Workerでローカルモデルが推論中…';try{$('aiLabOutput').textContent=await runLocalLanguageAI(prompt);}catch(err){$('aiLabOutput').textContent='生成できませんでした：'+String(err.message||err);}finally{$('aiLabAskBtn').disabled=false;}}
+async function askLocalAIAboutStudy(){const q=academicRuntime.last;if(!q){$('aiLabOutput').textContent='先に勉学モードで問題を1問表示してください。';return;}const opts=q.responseType==='choice'?'\n選択肢：\n'+(q.choices||[]).map((x,i)=>`${i+1}. ${x}`).join('\n'):'';const prompt=`次の問題を自力で解いてください。正解・解説は与えていません。条件整理、解法、根拠、結論、検算を示してください。\n教科：${q.subject}\n問題：${q.prompt}${opts}`;$('aiLabPrompt').value=prompt;$('aiLabAskBtn').disabled=true;$('aiLabOutput').textContent='現在の問題を専用Workerで推論中…';try{const text=await runLocalLanguageAI(prompt,'あなたは厳密な日本語の教科AIです。問題文と選択肢だけを使って解き、根拠のない断定を避け、記述式では途中過程を示してください。');$('aiLabOutput').textContent=text;const result=$('studyLocalAIResult');if(result){result.hidden=false;result.textContent='端末内LLMの独立回答（正解データはプロンプトに含めていません）：\n'+text;} }catch(err){$('aiLabOutput').textContent='生成失敗：'+String(err.message||err);}finally{$('aiLabAskBtn').disabled=false;}}
 
 function saveTriBrain(){try{const facts=academicState.facts||{},keys=Object.keys(facts);if(keys.length>5000){const trimmed={};for(const k of keys.slice(-5000))trimmed[k]=facts[k];academicState.facts=trimmed;}triBrain.academic=academicState;triBrain.coop=coopRecord;localStorage.setItem(TRI_SIM_STORAGE_KEY,JSON.stringify(triBrain));}catch(e){console.warn('3 simulation save skipped',e);}}
 function recordTriExperience(mode,reward,dimension=null,persist=true){triBrain.shared.modeCounts[mode]=(triBrain.shared.modeCounts[mode]||0)+1;const target=dimension||(mode==='duel'?'planning':mode==='coop'?'coordination':'knowledge');triBrain.shared[target]=clamp((Number(triBrain.shared[target])||0)+(Number(reward)||0)*.002,0,1);if(mode==='duel')triBrain.shared.prediction=clamp(triBrain.shared.prediction+(reward>0?.0015:.0005),0,1);if(persist)saveTriBrain();}
@@ -3519,12 +3659,12 @@ $('resetBtn').addEventListener('click',()=>{paused=false;$('pauseBtn').textConte
 
 $('learnSummaryBtn').addEventListener('click',showLearningSummary);$('benchmarkBtn').addEventListener('click',runAICapabilityBenchmark);$('selfTestBtn').addEventListener('click',()=>{const r=runLearningEngineSelfTest(),sim=runLearningSimulationSelfTest(),tri=runTriSimulationSelfTests();const bridge=verifyStairBridgeTemporarily();$('summaryText').textContent='思考→実行監査検査\n'+runExecutionAuditSelfTest().checks.map(c=>`${c.ok?'PASS':'FAIL'}：${c.name}`).join('\n')+'\n\n現在の実行記録\n青：'+executionSummary(blue)+'\n赤：'+executionSummary(red)+'\n\niPad内PPO検査\n'+runPpoSelfTests().checks.map(c=>`${c.ok?'PASS':'FAIL'}：${c.name}`).join('\n')+'\n\n内部機構検査\n'+r.checks.map(c=>`${c.ok?'PASS':'FAIL'}：${c.name}`).join('\n')+'\n\n学習シミュレーション\n'+sim.checks.map(c=>`${c.ok?'PASS':'FAIL'}：${c.name} — ${c.detail}`).join('\n')+'\n\n3シミュレーション検査\n'+tri.checks.map(c=>`${c.ok?'PASS':'FAIL'}：${c.name} — ${c.detail}`).join('\n')+'\n\n統合AI基盤検査\n'+runFullAICoreSelfTest().checks.map(c=>`${c.ok?'PASS':'FAIL'}：${c.name}`).join('\n')+'\n\n階段ブリッジ：'+JSON.stringify(bridge)+'\n\n実機での長時間対戦結果は別途確認が必要です。';$('summaryModal').hidden=false;});$('summaryCloseBtn').addEventListener('click',()=>{$('summaryModal').hidden=true;});$('summaryModal').addEventListener('click',e=>{if(e.target===$('summaryModal'))$('summaryModal').hidden=true;});document.addEventListener('keydown',e=>{if(e.key==='Escape')$('summaryModal').hidden=true;});
 window.addEventListener('resize',resize);document.addEventListener('visibilitychange',()=>{if(document.hidden){saveTriBrain();saveShogiBrain();saveParallelResearch();}else{clock.getDelta();updateHUD();if(simulationMode==='shogi')renderShogi();}});window.addEventListener('pagehide',()=>{saveTriBrain();saveShogiBrain();saveParallelResearch();for(const w of parallelWorkers)try{w.postMessage({type:'stop'});}catch(_){}});
-function updateAILabDeviceStatus(){const ua=navigator.userAgent||'',gpu=!!navigator.gpu;let text=`端末：${/iPad|iPhone/.test(ua)?'iOS/iPadOS':'ブラウザ端末'}／WebGPU API：${gpu?'あり':'なし'}／保存領域：${typeof indexedDB!=='undefined'?'IndexedDBあり':'確認不可'}。${lowPowerDevice?'低負荷設定：Worker 1基・描画30fps・影512px。':'通常設定：Worker最大2基。'}`;if(!gpu)text+='現在の環境ではWASM/CPU実行を使います。LLMは低速になる可能性があります。';else text+='WebGPUを検出しました。実際のモデル初期化に失敗した場合はWASMへ切り替えます。';$('aiLabDeviceStatus').textContent=text;}
+function updateAILabDeviceStatus(){const ua=navigator.userAgent||'',ios=/iPad|iPhone|iPod/.test(ua)||(navigator.platform==='MacIntel'&&Number(navigator.maxTouchPoints)>1),device=ios?'iPad／iPhone':'ブラウザ端末';let text=`端末：${device}／LLM：WASM・CPU固定／Q4量子化／専用Worker 1基／保存領域：${typeof indexedDB!=='undefined'?'IndexedDBあり':'確認不可'}。`;if(ios)text+='iOS/iPadOSではWebGPU APIの有無に依存せず、互換性優先でCPU実行します。読み込み中・文章生成中はゲームシミュレーションを低速化します。';else text+='モデルはGPUを使わずWASM/CPUで動作します。';if(lowPowerDevice)text+=' ゲーム側：Worker 1基・描画30fps・影512px。';$('aiLabDeviceStatus').textContent=text;}
 $('aiLabOpenBtn').addEventListener('click',()=>{$('aiLabModal').hidden=false;updateAILabDeviceStatus();refreshAILab();});$('aiLabCloseBtn').addEventListener('click',()=>$('aiLabModal').hidden=true);$('aiLabModal').addEventListener('click',e=>{if(e.target===$('aiLabModal'))$('aiLabModal').hidden=true;});$('aiLabLoadBtn').addEventListener('click',loadLocalLanguageAI);$('aiLabReleaseBtn').addEventListener('click',releaseLocalLanguageAI);$('aiLabAskBtn').addEventListener('click',askLocalAIFromLab);$('aiLabAskStudyBtn').addEventListener('click',askLocalAIAboutStudy);$('aiLabStudyLink').addEventListener('click',askLocalAIAboutStudy);$('aiLabRefreshBtn').addEventListener('click',()=>{refreshAILab();updateAILabDeviceStatus();});$('studyLocalAIButton').addEventListener('click',()=>{$('aiLabModal').hidden=false;updateAILabDeviceStatus();refreshAILab();askLocalAIAboutStudy();});$('aiLabPrompt').value='4つのAIの学習状況を、機械学習・探索・ルールベースに分けて評価するための監査観点を提案してください。';
 function runFullAICoreSelfTest(){const checks=[],academicBackup=JSON.parse(JSON.stringify(academicState.skillModel||{})),hadCoopPolicy=!!coopRecord.policy,coopBackup=hadCoopPolicy?JSON.parse(JSON.stringify(coopRecord.policy)):null;try{const a0=academicSkillEnsureModel().params.slice();const q={subject:'math',topic:'__ai_core_test__',grade:10,challengeLevel:8,calc:{op:'known',value:2}};academicSkillTrain(q,true);checks.push({name:'勉学の9→32→1技能MLPが回答結果から重みを更新',ok:academicState.skillModel.updates>0&&academicState.skillModel.params.some((v,i)=>v!==a0[i])});const p=coopPolicyGet(),f=Array(9).fill(.2),d={features:f,action:0},before=p.params.slice();coopPolicyTrain(d,.9);checks.push({name:'協力AIの9→32→2役割MLPが報酬から更新',ok:p.updates>0&&p.params.some((v,i)=>v!==before[i])});const st=shogiEngine.initialState(),ft=shogiEngine.positionFeatures(st),net=shogiEnsureValueNet(),old=net.weights.slice(),mock=st.board.findIndex(x=>x&&x.s===1&&x.t==='P'),altered=shogiEngine.cloneState(st);altered.board[mock]=null;const base=shogiEngine.evaluate(altered,1,{valueNet:old}),testWeights=old.slice();testWeights[896]=1.5;const withNet=shogiEngine.evaluate(altered,1,{valueNet:testWeights});checks.push({name:'将棋12→64→1局面価値ネットが探索評価に反映',ok:ft.length===12&&old.length===897&&Number.isFinite(withNet)&&Math.abs(withNet-base)>0.001});const pp=runPpoSelfTests();checks.push({name:'対戦AIの64ユニットPPOが実際に方策重みを更新',ok:pp.ok&&PPO_CONFIG.hidden===64&&PPO_LAYOUT.total===3026});}catch(e){checks.push({name:'統合AI自己検査例外',ok:false,error:String(e)});}finally{academicState.skillModel=academicBackup.params?academicBackup:{version:2,params:Array(353).fill(0),samples:0,updates:0,lastLoss:0};if(hadCoopPolicy)coopRecord.policy=coopBackup;else delete coopRecord.policy;}return {ok:checks.every(c=>c.ok),checks};}
 
 buildArena();buildRig(blue);buildRig(red);const restored=restoreLearning();startTrial();runStartupArchitectureChecks();document.body.dataset.simMode='duel';renderAcademicPanel();renderShogi();if(restored){log('note','保存された進化を復元',`累計${completedTrials}試行の勝敗履歴と作戦を復元。`);toast('学習を復元','勝敗から進化した作戦と成績を引き継ぎます。',1400);}else{log('note','実験開始：持ち運び作戦進化', '途中ポイントなし。試行の最後の勝敗だけで作戦を強化・変更します。');toast('AI TRIAL','青は最初の7秒間停止。赤は判断と移動が速く、両AIは自作作戦を試行ごとに進化させます。',2600);}resize();$('loader').style.display='none';renderShogi();initParallelThinking();
-let raf=0,lastHudT=0,lastLowPowerPaint=0;function animate(){raf=requestAnimationFrame(animate);const real=Math.min(clock.getDelta(),.045);if(toastTimer>0){toastTimer-=real;if(toastTimer<=0)$('toast').classList.remove('show');}if(!paused&&gameState==='running'){if(simulationMode==='shogi'){accumulator=0;shogiStep(real*speed);}else{accumulator+=real*speed;const simStep=speed>=50?.04:(speed>=10?.03:.02);let safety=0;const maxSteps=Math.min(speed>=500?500:speed>=200?360:180,Math.max(24,Math.ceil(accumulator/simStep)+2));while(accumulator>=simStep&&safety<maxSteps){step(simStep);accumulator-=simStep;safety++;if(gameState!=='running'){accumulator=0;break;}}}}else{accumulator=0;}const now=performance.now(),paintDue=!lowPowerDevice||now-lastLowPowerPaint>=33;if(paintDue){lastLowPowerPaint=now;if(simulationMode==='duel'){pose(blue,real*Math.min(speed,4));pose(red,real*Math.min(speed,4));handleWorldVisuals();renderer.render(scene,camera);}if(simulationMode==='coop')drawCoop();}if(now-lastHudT>220){lastHudT=now;if(simulationMode==='duel')updateHUD();}}
+let raf=0,lastHudT=0,lastLowPowerPaint=0;function animate(){const llmBusy=!!localLanguageAI.busy;if(llmBusy)setTimeout(()=>{raf=requestAnimationFrame(animate);},100);else raf=requestAnimationFrame(animate);const real=Math.min(clock.getDelta(),.045);if(toastTimer>0){toastTimer-=real;if(toastTimer<=0)$('toast').classList.remove('show');}if(!llmBusy&&!paused&&gameState==='running'){if(simulationMode==='shogi'){accumulator=0;shogiStep(real*speed);}else{accumulator+=real*speed;const simStep=speed>=50?.04:(speed>=10?.03:.02);let safety=0;const maxSteps=Math.min(speed>=500?500:speed>=200?360:180,Math.max(24,Math.ceil(accumulator/simStep)+2));while(accumulator>=simStep&&safety<maxSteps){step(simStep);accumulator-=simStep;safety++;if(gameState!=='running'){accumulator=0;break;}}}}else{accumulator=0;}const now=performance.now(),paintInterval=llmBusy?400:(lowPowerDevice?33:0),paintDue=paintInterval===0||now-lastLowPowerPaint>=paintInterval;if(paintDue){lastLowPowerPaint=now;if(simulationMode==='duel'){pose(blue,real*Math.min(speed,4));pose(red,real*Math.min(speed,4));handleWorldVisuals();renderer.render(scene,camera);}if(simulationMode==='coop')drawCoop();}if(now-lastHudT>220){lastHudT=now;if(simulationMode==='duel')updateHUD();}}
 animate();
 function academicAnswerEngineSelfTest(){
  const checks=[];
